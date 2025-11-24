@@ -2,8 +2,20 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -32,27 +44,52 @@ import { Badge } from "@/components/ui/badge";
 import { UserPlus, Trash2, Mail, Check, Clock } from "lucide-react";
 import type { TeamMember } from "@shared/schema";
 
+const inviteFormSchema = z.object({
+  email: z.string().email("Please enter a valid email address"),
+  role: z.enum(["admin", "contributor", "viewer"]),
+});
+
 export default function Team() {
   const { toast } = useToast();
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("viewer");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [memberToDelete, setMemberToDelete] = useState<TeamMember | null>(null);
+
+  const inviteForm = useForm<z.infer<typeof inviteFormSchema>>({
+    resolver: zodResolver(inviteFormSchema),
+    defaultValues: {
+      email: "",
+      role: "viewer",
+    },
+  });
+
+  const { data: user } = useQuery({
+    queryKey: ["/api/auth/user"],
+  });
+
+  const { data: kb } = useQuery({
+    queryKey: ["/api/knowledge-bases"],
+  });
 
   const { data: members, isLoading } = useQuery<TeamMember[]>({
     queryKey: ["/api/team/members"],
   });
 
+  const currentUserKb = Array.isArray(kb) ? kb[0] : kb;
+  const currentUserId = user?.id;
+  const currentUserIsOwner = currentUserKb?.userId === currentUserId;
+  const currentUserMember = members?.find((m) => m.userId === currentUserId);
+  const currentUserRole = currentUserIsOwner ? "owner" : currentUserMember?.role || "viewer";
+  const canManageTeam = currentUserRole === "owner" || currentUserRole === "admin";
+
   const inviteMutation = useMutation({
-    mutationFn: async (data: { email: string; role: string }) => {
+    mutationFn: async (data: z.infer<typeof inviteFormSchema>) => {
       return await apiRequest("/api/team/invite", "POST", data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/team/members"] });
       setInviteDialogOpen(false);
-      setInviteEmail("");
-      setInviteRole("viewer");
+      inviteForm.reset();
       toast({
         title: "Invitation sent",
         description: "Team member has been invited successfully.",
@@ -109,16 +146,8 @@ export default function Team() {
     },
   });
 
-  const handleInvite = () => {
-    if (!inviteEmail) {
-      toast({
-        title: "Error",
-        description: "Please enter an email address",
-        variant: "destructive",
-      });
-      return;
-    }
-    inviteMutation.mutate({ email: inviteEmail, role: inviteRole });
+  const handleInvite = (data: z.infer<typeof inviteFormSchema>) => {
+    inviteMutation.mutate(data);
   };
 
   const handleRoleChange = (memberId: string, role: string) => {
@@ -161,10 +190,16 @@ export default function Team() {
         <div>
           <h1 className="text-3xl font-bold" data-testid="heading-team">Team Members</h1>
           <p className="text-muted-foreground mt-1">
-            Invite team members to collaborate on your knowledge base
+            {canManageTeam
+              ? "Invite team members to collaborate on your knowledge base"
+              : `You are a ${currentUserRole}. Only owners and admins can manage team members.`}
           </p>
         </div>
-        <Button onClick={() => setInviteDialogOpen(true)} data-testid="button-invite-member">
+        <Button
+          onClick={() => setInviteDialogOpen(true)}
+          disabled={!canManageTeam}
+          data-testid="button-invite-member"
+        >
           <UserPlus className="w-4 h-4 mr-2" />
           Invite Member
         </Button>
@@ -199,7 +234,7 @@ export default function Team() {
                     <Select
                       value={member.role}
                       onValueChange={(value) => handleRoleChange(member.id, value)}
-                      disabled={updateRoleMutation.isPending}
+                      disabled={!canManageTeam || updateRoleMutation.isPending}
                     >
                       <SelectTrigger className="w-32" data-testid={`select-role-${member.id}`}>
                         <SelectValue />
@@ -227,6 +262,7 @@ export default function Team() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleDeleteClick(member)}
+                      disabled={!canManageTeam}
                       data-testid={`button-delete-${member.id}`}
                     >
                       <Trash2 className="w-4 h-4 text-destructive" />
@@ -259,43 +295,65 @@ export default function Team() {
               Send an invitation to collaborate on your knowledge base
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Email Address</label>
-              <Input
-                type="email"
-                placeholder="colleague@example.com"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                data-testid="input-invite-email"
+          <Form {...inviteForm}>
+            <form onSubmit={inviteForm.handleSubmit(handleInvite)} className="space-y-4">
+              <FormField
+                control={inviteForm.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email Address</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="email"
+                        placeholder="colleague@example.com"
+                        data-testid="input-invite-email"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Role</label>
-              <Select value={inviteRole} onValueChange={setInviteRole}>
-                <SelectTrigger data-testid="select-invite-role">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">Admin - Full access</SelectItem>
-                  <SelectItem value="contributor">Contributor - Can edit articles</SelectItem>
-                  <SelectItem value="viewer">Viewer - Read-only access</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setInviteDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleInvite}
-              disabled={inviteMutation.isPending}
-              data-testid="button-send-invite"
-            >
-              {inviteMutation.isPending ? "Sending..." : "Send Invitation"}
-            </Button>
-          </DialogFooter>
+              <FormField
+                control={inviteForm.control}
+                name="role"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Role</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl>
+                        <SelectTrigger data-testid="select-invite-role">
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="admin">Admin - Full access</SelectItem>
+                        <SelectItem value="contributor">Contributor - Can edit articles</SelectItem>
+                        <SelectItem value="viewer">Viewer - Read-only access</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>
+                      Admins can manage team and content, contributors can edit articles, viewers have read-only access
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setInviteDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={inviteMutation.isPending}
+                  data-testid="button-send-invite"
+                >
+                  {inviteMutation.isPending ? "Sending..." : "Send Invitation"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
         </DialogContent>
       </Dialog>
 

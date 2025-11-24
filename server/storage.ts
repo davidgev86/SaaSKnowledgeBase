@@ -61,6 +61,7 @@ export interface IStorage {
   getTeamMemberById(id: string): Promise<TeamMember | undefined>;
   getTeamMemberByToken(token: string): Promise<TeamMember | undefined>;
   getUserRole(userId: string, kbId: string): Promise<string | undefined>;
+  getKnowledgeBaseForUser(userId: string): Promise<KnowledgeBase | undefined>;
   createTeamMember(member: InsertTeamMember): Promise<TeamMember>;
   updateTeamMember(id: string, member: UpdateTeamMember): Promise<TeamMember>;
   deleteTeamMember(id: string): Promise<void>;
@@ -295,6 +296,22 @@ export class DatabaseStorage implements IStorage {
     }
     
     return member?.role;
+  }
+
+  async getKnowledgeBaseForUser(userId: string): Promise<KnowledgeBase | undefined> {
+    const ownedKb = await this.getKnowledgeBaseByUserId(userId);
+    if (ownedKb) {
+      return ownedKb;
+    }
+
+    const [membership] = await db
+      .select({ kb: knowledgeBases })
+      .from(teamMembers)
+      .innerJoin(knowledgeBases, eq(teamMembers.knowledgeBaseId, knowledgeBases.id))
+      .where(and(eq(teamMembers.userId, userId), eq(teamMembers.status, "active")))
+      .limit(1);
+
+    return membership?.kb;
   }
 
   async createTeamMember(memberData: InsertTeamMember): Promise<TeamMember> {

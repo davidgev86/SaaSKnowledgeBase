@@ -22,6 +22,16 @@ function getUserId(req: Request): string {
   return user?.claims?.sub;
 }
 
+async function checkUserCanEdit(userId: string, kbId: string): Promise<boolean> {
+  const role = await storage.getUserRole(userId, kbId);
+  return role === "owner" || role === "admin" || role === "contributor";
+}
+
+async function checkUserCanManage(userId: string, kbId: string): Promise<boolean> {
+  const role = await storage.getUserRole(userId, kbId);
+  return role === "owner" || role === "admin";
+}
+
 export function registerRoutes(app: Express) {
   app.get("/api/auth/user", isAuthenticated, async (req, res) => {
     try {
@@ -77,7 +87,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/articles", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseByUserId(userId);
+      const kb = await storage.getKnowledgeBaseForUser(userId);
       if (!kb) {
         return res.json([]);
       }
@@ -90,10 +100,17 @@ export function registerRoutes(app: Express) {
 
   app.get("/api/articles/:id", isAuthenticated, async (req, res) => {
     try {
+      const userId = getUserId(req);
       const article = await storage.getArticleById(req.params.id);
       if (!article) {
         return res.status(404).json({ message: "Article not found" });
       }
+      
+      const userRole = await storage.getUserRole(userId, article.knowledgeBaseId);
+      if (!userRole) {
+        return res.status(403).json({ message: "You don't have access to this article" });
+      }
+      
       res.json(article);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -103,9 +120,14 @@ export function registerRoutes(app: Express) {
   app.post("/api/articles", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseByUserId(userId);
+      const kb = await storage.getKnowledgeBaseForUser(userId);
       if (!kb) {
         return res.status(400).json({ message: "Knowledge base not found. Create one first." });
+      }
+
+      const canEdit = await checkUserCanEdit(userId, kb.id);
+      if (!canEdit) {
+        return res.status(403).json({ message: "You don't have permission to create articles" });
       }
 
       const validatedData = insertArticleSchema.omit({ id: true, createdAt: true, updatedAt: true }).parse({
@@ -122,14 +144,16 @@ export function registerRoutes(app: Express) {
   app.put("/api/articles/:id", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseByUserId(userId);
-      if (!kb) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
       const existing = await storage.getArticleById(req.params.id);
-      if (!existing || existing.knowledgeBaseId !== kb.id) {
-        return res.status(403).json({ message: "Forbidden" });
+      if (!existing) {
+        return res.status(404).json({ message: "Article not found" });
       }
+      
+      const canEdit = await checkUserCanEdit(userId, existing.knowledgeBaseId);
+      if (!canEdit) {
+        return res.status(403).json({ message: "You don't have permission to edit this article" });
+      }
+      
       const article = await storage.updateArticle(req.params.id, req.body);
       res.json(article);
     } catch (error: any) {
@@ -140,14 +164,16 @@ export function registerRoutes(app: Express) {
   app.delete("/api/articles/:id", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseByUserId(userId);
-      if (!kb) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
       const existing = await storage.getArticleById(req.params.id);
-      if (!existing || existing.knowledgeBaseId !== kb.id) {
-        return res.status(403).json({ message: "Forbidden" });
+      if (!existing) {
+        return res.status(404).json({ message: "Article not found" });
       }
+      
+      const canManage = await checkUserCanManage(userId, existing.knowledgeBaseId);
+      if (!canManage) {
+        return res.status(403).json({ message: "Only owners and admins can delete articles" });
+      }
+      
       await storage.deleteArticle(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -158,7 +184,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/categories", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseByUserId(userId);
+      const kb = await storage.getKnowledgeBaseForUser(userId);
       if (!kb) {
         return res.json([]);
       }
@@ -172,9 +198,14 @@ export function registerRoutes(app: Express) {
   app.post("/api/categories", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseByUserId(userId);
+      const kb = await storage.getKnowledgeBaseForUser(userId);
       if (!kb) {
         return res.status(400).json({ message: "Knowledge base not found. Create one first." });
+      }
+
+      const canEdit = await checkUserCanEdit(userId, kb.id);
+      if (!canEdit) {
+        return res.status(403).json({ message: "You don't have permission to create categories" });
       }
 
       const validatedData = insertCategorySchema.omit({ id: true, createdAt: true, updatedAt: true }).parse({
@@ -192,14 +223,16 @@ export function registerRoutes(app: Express) {
   app.put("/api/categories/:id", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseByUserId(userId);
-      if (!kb) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
       const existing = await storage.getCategoryById(req.params.id);
-      if (!existing || existing.knowledgeBaseId !== kb.id) {
-        return res.status(403).json({ message: "Forbidden" });
+      if (!existing) {
+        return res.status(404).json({ message: "Category not found" });
       }
+      
+      const canEdit = await checkUserCanEdit(userId, existing.knowledgeBaseId);
+      if (!canEdit) {
+        return res.status(403).json({ message: "You don't have permission to edit this category" });
+      }
+      
       const category = await storage.updateCategory(req.params.id, req.body);
       res.json(category);
     } catch (error: any) {
@@ -210,14 +243,16 @@ export function registerRoutes(app: Express) {
   app.delete("/api/categories/:id", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseByUserId(userId);
-      if (!kb) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
       const existing = await storage.getCategoryById(req.params.id);
-      if (!existing || existing.knowledgeBaseId !== kb.id) {
-        return res.status(403).json({ message: "Forbidden" });
+      if (!existing) {
+        return res.status(404).json({ message: "Category not found" });
       }
+      
+      const canManage = await checkUserCanManage(userId, existing.knowledgeBaseId);
+      if (!canManage) {
+        return res.status(403).json({ message: "Only owners and admins can delete categories" });
+      }
+      
       await storage.deleteCategory(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -228,11 +263,20 @@ export function registerRoutes(app: Express) {
   app.get("/api/analytics/views", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseByUserId(userId);
+      const kb = await storage.getKnowledgeBaseForUser(userId);
       if (!kb) {
-        return res.json({ totalViews: 0, recentViews: [] });
+        return res.json({ totalViews: 0, recentViews: [], viewsByDate: [] });
       }
-      const stats = await storage.getArticleViewStats(kb.id);
+      
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+      
+      if (req.query.startDate && req.query.endDate) {
+        startDate = new Date(req.query.startDate as string);
+        endDate = new Date(req.query.endDate as string);
+      }
+      
+      const stats = await storage.getArticleViewStats(kb.id, startDate, endDate);
       res.json(stats);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -242,12 +286,39 @@ export function registerRoutes(app: Express) {
   app.get("/api/analytics/searches", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseByUserId(userId);
+      const kb = await storage.getKnowledgeBaseForUser(userId);
       if (!kb) {
         return res.json({ totalSearches: 0, recentSearches: [] });
       }
       const stats = await storage.getSearchStats(kb.id);
       res.json(stats);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/analytics/export", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kb = await storage.getKnowledgeBaseForUser(userId);
+      if (!kb) {
+        return res.status(404).json({ message: "Knowledge base not found" });
+      }
+
+      const viewStats = await storage.getArticleViewStats(kb.id);
+      const searchStats = await storage.getSearchStats(kb.id);
+
+      let csv = "Type,Item,Count\n";
+      viewStats.recentViews.forEach((view: any) => {
+        csv += `Article View,"${view.articleTitle}",${view.views}\n`;
+      });
+      searchStats.recentSearches.forEach((search: any) => {
+        csv += `Search,"${search.query}",${search.count}\n`;
+      });
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", 'attachment; filename="analytics-export.csv"');
+      res.send(csv);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -414,7 +485,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/team/members", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseByUserId(userId);
+      const kb = await storage.getKnowledgeBaseForUser(userId);
       if (!kb) {
         return res.json([]);
       }
@@ -429,7 +500,7 @@ export function registerRoutes(app: Express) {
     try {
       const userId = getUserId(req);
       const validatedData = inviteSchema.parse(req.body);
-      const kb = await storage.getKnowledgeBaseByUserId(userId);
+      const kb = await storage.getKnowledgeBaseForUser(userId);
       if (!kb) {
         return res.status(404).json({ message: "Knowledge base not found" });
       }
