@@ -1,5 +1,5 @@
 import { useLocation } from "wouter";
-import { Home, FileText, FolderOpen, Settings, BarChart3, LogOut } from "lucide-react";
+import { Home, FileText, FolderOpen, Settings, BarChart3, Users, LogOut } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -26,6 +26,11 @@ const menuItems = [
     title: "Categories",
     url: "/categories",
     icon: FolderOpen,
+  },
+  {
+    title: "Team",
+    url: "/team",
+    icon: Users,
   },
   {
     title: "Analytics",

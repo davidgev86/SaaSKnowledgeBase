@@ -3,8 +3,17 @@ import { isAuthenticated } from "./replitAuth";
 import { storage } from "./storage";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
-import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema } from "@shared/schema";
+import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema, insertTeamMemberSchema } from "@shared/schema";
 import { z } from "zod";
+
+const inviteSchema = z.object({
+  email: z.string().email(),
+  role: z.enum(["admin", "contributor", "viewer"]),
+});
+
+const roleUpdateSchema = z.object({
+  role: z.enum(["admin", "contributor", "viewer"]),
+});
 
 const objectStorageService = new ObjectStorageService();
 
@@ -399,6 +408,137 @@ export function registerRoutes(app: Express) {
         return res.status(404).json({ error: "Object not found" });
       }
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/team/members", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kb = await storage.getKnowledgeBaseByUserId(userId);
+      if (!kb) {
+        return res.json([]);
+      }
+      const members = await storage.getTeamMembersByKnowledgeBaseId(kb.id);
+      res.json(members);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/team/invite", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const validatedData = inviteSchema.parse(req.body);
+      const kb = await storage.getKnowledgeBaseByUserId(userId);
+      if (!kb) {
+        return res.status(404).json({ message: "Knowledge base not found" });
+      }
+
+      const userRole = await storage.getUserRole(userId, kb.id);
+      if (!userRole || (userRole !== "owner" && userRole !== "admin")) {
+        return res.status(403).json({ message: "Only owners and admins can invite members" });
+      }
+
+      const inviteToken = Math.random().toString(36).substring(2, 15);
+      const member = await storage.createTeamMember({
+        knowledgeBaseId: kb.id,
+        invitedEmail: validatedData.email,
+        role: validatedData.role,
+        status: "pending",
+        inviteToken,
+        userId: null,
+      });
+      res.json(member);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.put("/api/team/:memberId/role", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const validatedData = roleUpdateSchema.parse(req.body);
+      const member = await storage.getTeamMemberById(req.params.memberId);
+      if (!member) {
+        return res.status(404).json({ message: "Member not found" });
+      }
+
+      const kb = await storage.getKnowledgeBaseById(member.knowledgeBaseId);
+      if (!kb) {
+        return res.status(404).json({ message: "Knowledge base not found" });
+      }
+
+      const userRole = await storage.getUserRole(userId, kb.id);
+      if (!userRole || (userRole !== "owner" && userRole !== "admin")) {
+        return res.status(403).json({ message: "Only owners and admins can update roles" });
+      }
+
+      const updated = await storage.updateTeamMember(req.params.memberId, { role: validatedData.role });
+      res.json(updated);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/team/:memberId", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const member = await storage.getTeamMemberById(req.params.memberId);
+      if (!member) {
+        return res.status(404).json({ message: "Member not found" });
+      }
+
+      const kb = await storage.getKnowledgeBaseById(member.knowledgeBaseId);
+      if (!kb) {
+        return res.status(404).json({ message: "Knowledge base not found" });
+      }
+
+      const userRole = await storage.getUserRole(userId, kb.id);
+      if (!userRole || (userRole !== "owner" && userRole !== "admin")) {
+        return res.status(403).json({ message: "Only owners and admins can remove members" });
+      }
+
+      await storage.deleteTeamMember(req.params.memberId);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/team/accept/:token", async (req, res) => {
+    try {
+      const member = await storage.getTeamMemberByToken(req.params.token);
+      if (!member) {
+        return res.status(404).json({ message: "Invalid invite token" });
+      }
+      res.json(member);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/team/accept/:token", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const member = await storage.getTeamMemberByToken(req.params.token);
+      if (!member) {
+        return res.status(404).json({ message: "Invalid invite token" });
+      }
+
+      const updated = await storage.updateTeamMember(member.id, {
+        userId,
+        status: "active",
+        acceptedAt: new Date(),
+      });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
     }
   });
 }

@@ -15,6 +15,7 @@ import ArticleEditor from "@/pages/ArticleEditor";
 import Categories from "@/pages/Categories";
 import Settings from "@/pages/Settings";
 import Analytics from "@/pages/Analytics";
+import Team from "@/pages/Team";
 import PublicKnowledgeBase from "@/pages/PublicKnowledgeBase";
 import PublicArticle from "@/pages/PublicArticle";
 import PublicSearch from "@/pages/PublicSearch";
@@ -64,6 +65,7 @@ function AppContent() {
               <Route path="/articles/new" component={ArticleEditor} />
               <Route path="/articles/:id/edit" component={ArticleEditor} />
               <Route path="/categories" component={Categories} />
+              <Route path="/team" component={Team} />
               <Route path="/settings" component={Settings} />
               <Route path="/analytics" component={Analytics} />
               <Route path="/kb/:userId" component={PublicKnowledgeBase} />

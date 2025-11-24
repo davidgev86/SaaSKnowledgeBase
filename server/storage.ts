@@ -6,6 +6,7 @@ import {
   analyticsViews,
   analyticsSearches,
   articleFeedback,
+  teamMembers,
   type User,
   type UpsertUser,
   type KnowledgeBase,
@@ -17,6 +18,9 @@ import {
   type InsertAnalyticsView,
   type InsertAnalyticsSearch,
   type InsertArticleFeedback,
+  type InsertTeamMember,
+  type UpdateTeamMember,
+  type TeamMember,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql } from "drizzle-orm";
@@ -44,7 +48,7 @@ export interface IStorage {
   deleteCategory(id: string): Promise<void>;
 
   trackArticleView(view: InsertAnalyticsView): Promise<void>;
-  getArticleViewStats(kbId: string): Promise<any>;
+  getArticleViewStats(kbId: string, startDate?: Date, endDate?: Date): Promise<any>;
 
   trackSearch(search: InsertAnalyticsSearch): Promise<void>;
   getSearchStats(kbId: string): Promise<any>;
@@ -52,6 +56,14 @@ export interface IStorage {
   submitArticleFeedback(feedback: InsertArticleFeedback): Promise<void>;
 
   searchArticles(kbId: string, query: string): Promise<Article[]>;
+
+  getTeamMembersByKnowledgeBaseId(kbId: string): Promise<TeamMember[]>;
+  getTeamMemberById(id: string): Promise<TeamMember | undefined>;
+  getTeamMemberByToken(token: string): Promise<TeamMember | undefined>;
+  getUserRole(userId: string, kbId: string): Promise<string | undefined>;
+  createTeamMember(member: InsertTeamMember): Promise<TeamMember>;
+  updateTeamMember(id: string, member: UpdateTeamMember): Promise<TeamMember>;
+  deleteTeamMember(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -161,7 +173,15 @@ export class DatabaseStorage implements IStorage {
     await db.insert(analyticsViews).values(viewData);
   }
 
-  async getArticleViewStats(kbId: string): Promise<any> {
+  async getArticleViewStats(kbId: string, startDate?: Date, endDate?: Date): Promise<any> {
+    const dateFilter = startDate && endDate
+      ? and(
+          eq(articles.knowledgeBaseId, kbId),
+          sql`${analyticsViews.viewedAt} >= ${startDate}`,
+          sql`${analyticsViews.viewedAt} <= ${endDate}`
+        )
+      : eq(articles.knowledgeBaseId, kbId);
+
     const articleViews = await db
       .select({
         articleId: analyticsViews.articleId,
@@ -170,7 +190,7 @@ export class DatabaseStorage implements IStorage {
       })
       .from(analyticsViews)
       .innerJoin(articles, eq(analyticsViews.articleId, articles.id))
-      .where(eq(articles.knowledgeBaseId, kbId))
+      .where(dateFilter!)
       .groupBy(analyticsViews.articleId, articles.title)
       .orderBy(desc(sql`count(*)`));
 
@@ -178,11 +198,23 @@ export class DatabaseStorage implements IStorage {
       .select({ count: sql<number>`count(*)::int` })
       .from(analyticsViews)
       .innerJoin(articles, eq(analyticsViews.articleId, articles.id))
-      .where(eq(articles.knowledgeBaseId, kbId));
+      .where(dateFilter!);
+
+    const viewsByDate = await db
+      .select({
+        date: sql<string>`DATE(${analyticsViews.viewedAt})`,
+        views: sql<number>`count(*)::int`,
+      })
+      .from(analyticsViews)
+      .innerJoin(articles, eq(analyticsViews.articleId, articles.id))
+      .where(dateFilter!)
+      .groupBy(sql`DATE(${analyticsViews.viewedAt})`)
+      .orderBy(sql`DATE(${analyticsViews.viewedAt})`);
 
     return {
       totalViews: totalViews[0]?.count || 0,
       recentViews: articleViews,
+      viewsByDate,
     };
   }
 
@@ -229,6 +261,58 @@ export class DatabaseStorage implements IStorage {
         )
       )
       .orderBy(desc(articles.updatedAt));
+  }
+
+  async getTeamMembersByKnowledgeBaseId(kbId: string): Promise<TeamMember[]> {
+    return db.select().from(teamMembers).where(eq(teamMembers.knowledgeBaseId, kbId));
+  }
+
+  async getTeamMemberById(id: string): Promise<TeamMember | undefined> {
+    const [member] = await db.select().from(teamMembers).where(eq(teamMembers.id, id));
+    return member;
+  }
+
+  async getTeamMemberByToken(token: string): Promise<TeamMember | undefined> {
+    const [member] = await db.select().from(teamMembers).where(eq(teamMembers.inviteToken, token));
+    return member;
+  }
+
+  async getUserRole(userId: string, kbId: string): Promise<string | undefined> {
+    const [member] = await db
+      .select({ role: teamMembers.role })
+      .from(teamMembers)
+      .where(
+        and(
+          eq(teamMembers.userId, userId),
+          eq(teamMembers.knowledgeBaseId, kbId),
+          eq(teamMembers.status, "active")
+        )
+      );
+    
+    const kb = await this.getKnowledgeBaseById(kbId);
+    if (kb && kb.userId === userId) {
+      return "owner";
+    }
+    
+    return member?.role;
+  }
+
+  async createTeamMember(memberData: InsertTeamMember): Promise<TeamMember> {
+    const [member] = await db.insert(teamMembers).values(memberData).returning();
+    return member;
+  }
+
+  async updateTeamMember(id: string, memberData: UpdateTeamMember): Promise<TeamMember> {
+    const [member] = await db
+      .update(teamMembers)
+      .set(memberData)
+      .where(eq(teamMembers.id, id))
+      .returning();
+    return member;
+  }
+
+  async deleteTeamMember(id: string): Promise<void> {
+    await db.delete(teamMembers).where(eq(teamMembers.id, id));
   }
 }
 

@@ -196,3 +196,40 @@ export const insertArticleFeedbackSchema = createInsertSchema(articleFeedback).o
 
 export type InsertArticleFeedback = z.infer<typeof insertArticleFeedbackSchema>;
 export type ArticleFeedback = typeof articleFeedback.$inferSelect;
+
+// Team Members table - Multi-user collaboration
+export const teamMembers = pgTable("team_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  knowledgeBaseId: varchar("knowledge_base_id").notNull().references(() => knowledgeBases.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "cascade" }),
+  invitedEmail: varchar("invited_email").notNull(),
+  role: varchar("role").notNull().default("viewer"), // admin, contributor, viewer
+  status: varchar("status").notNull().default("pending"), // pending, active
+  inviteToken: varchar("invite_token"),
+  invitedAt: timestamp("invited_at").defaultNow(),
+  acceptedAt: timestamp("accepted_at"),
+});
+
+export const teamMembersRelations = relations(teamMembers, ({ one }) => ({
+  knowledgeBase: one(knowledgeBases, {
+    fields: [teamMembers.knowledgeBaseId],
+    references: [knowledgeBases.id],
+  }),
+  user: one(users, {
+    fields: [teamMembers.userId],
+    references: [users.id],
+  }),
+}));
+
+export const insertTeamMemberSchema = createInsertSchema(teamMembers).omit({
+  id: true,
+  invitedAt: true,
+});
+
+export const updateTeamMemberSchema = insertTeamMemberSchema.partial().extend({
+  acceptedAt: z.date().optional(),
+});
+
+export type InsertTeamMember = z.infer<typeof insertTeamMemberSchema>;
+export type UpdateTeamMember = z.infer<typeof updateTeamMemberSchema>;
+export type TeamMember = typeof teamMembers.$inferSelect;
