@@ -1,47 +1,62 @@
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { Upload } from "lucide-react";
 import type { UploadResult } from "@uppy/core";
 import type { KnowledgeBase } from "@shared/schema";
+import { insertKnowledgeBaseSchema } from "@shared/schema";
+import { z } from "zod";
+
+const settingsFormSchema = insertKnowledgeBaseSchema.extend({
+  siteTitle: z.string().min(1, "Site title is required"),
+  primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Invalid color format"),
+}).omit({ userId: true });
+
+type SettingsFormValues = z.infer<typeof settingsFormSchema>;
 
 export default function Settings() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const [siteTitle, setSiteTitle] = useState("Knowledge Base");
-  const [primaryColor, setPrimaryColor] = useState("#3B82F6");
-  const [logoUrl, setLogoUrl] = useState("");
 
-  const { data: knowledgeBases } = useQuery<KnowledgeBase[]>({
+  const { data: knowledgeBases, isLoading } = useQuery<KnowledgeBase[]>({
     queryKey: ["/api/knowledge-bases"],
   });
 
   const kb = knowledgeBases?.[0];
 
+  const form = useForm<SettingsFormValues>({
+    resolver: zodResolver(settingsFormSchema),
+    defaultValues: {
+      siteTitle: "Knowledge Base",
+      primaryColor: "#3B82F6",
+      logoUrl: null,
+      customDomain: null,
+    },
+  });
+
   useEffect(() => {
     if (kb) {
-      setSiteTitle(kb.siteTitle);
-      setPrimaryColor(kb.primaryColor || "#3B82F6");
-      setLogoUrl(kb.logoUrl || "");
+      form.reset({
+        siteTitle: kb.siteTitle,
+        primaryColor: kb.primaryColor || "#3B82F6",
+        logoUrl: kb.logoUrl || null,
+        customDomain: kb.customDomain || null,
+      });
     }
-  }, [kb]);
+  }, [kb, form]);
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
-      const data = {
-        siteTitle,
-        primaryColor,
-        logoUrl: logoUrl || null,
-      };
-
+    mutationFn: async (data: SettingsFormValues) => {
       if (kb) {
         await apiRequest("PUT", `/api/knowledge-bases/${kb.id}`, data);
       } else {
@@ -75,6 +90,14 @@ export default function Settings() {
     },
   });
 
+  const onSubmit = (data: SettingsFormValues) => {
+    const normalizedData = {
+      ...data,
+      primaryColor: data.primaryColor?.toUpperCase() || "#3B82F6",
+    };
+    saveMutation.mutate(normalizedData);
+  };
+
   const handleLogoUpload = async () => {
     try {
       const response = await fetch("/api/objects/upload", {
@@ -101,7 +124,7 @@ export default function Settings() {
       const response = await apiRequest("PUT", "/api/logos", {
         logoURL: uploadedFile.uploadURL,
       });
-      setLogoUrl(response.objectPath);
+      form.setValue("logoUrl", response.objectPath);
       toast({
         title: "Success",
         description: "Logo uploaded successfully",
@@ -122,140 +145,167 @@ export default function Settings() {
         <p className="text-muted-foreground">Customize your knowledge base branding</p>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-8">
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Basic Information</CardTitle>
-              <CardDescription>Configure your knowledge base details</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <Label htmlFor="siteTitle">Site Title</Label>
-                <Input
-                  id="siteTitle"
-                  value={siteTitle}
-                  onChange={(e) => setSiteTitle(e.target.value)}
-                  placeholder="My Knowledge Base"
-                  data-testid="input-site-title"
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="grid lg:grid-cols-2 gap-8">
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Basic Information</CardTitle>
+                <CardDescription>Configure your knowledge base details</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <FormField
+                  control={form.control}
+                  name="siteTitle"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Site Title</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="My Knowledge Base"
+                          data-testid="input-site-title"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-              </div>
 
-              <div>
-                <Label htmlFor="primaryColor">Primary Color</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="primaryColor"
-                    type="color"
-                    value={primaryColor}
-                    onChange={(e) => setPrimaryColor(e.target.value)}
-                    className="w-20 h-10 cursor-pointer"
-                    data-testid="input-primary-color"
-                  />
-                  <Input
-                    type="text"
-                    value={primaryColor}
-                    onChange={(e) => setPrimaryColor(e.target.value)}
-                    className="flex-1"
-                    data-testid="input-primary-color-text"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <Label>Logo</Label>
-                <div className="flex items-center gap-4 mt-2">
-                  {logoUrl && (
-                    <img
-                      src={logoUrl}
-                      alt="Logo"
-                      className="w-16 h-16 object-contain border rounded"
-                      data-testid="img-current-logo"
-                    />
+                <FormField
+                  control={form.control}
+                  name="primaryColor"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Primary Color</FormLabel>
+                      <FormControl>
+                        <div className="flex gap-2">
+                          <Input
+                            type="color"
+                            value={field.value || "#3B82F6"}
+                            onChange={field.onChange}
+                            className="w-20 h-10 cursor-pointer"
+                            data-testid="input-primary-color"
+                          />
+                          <Input
+                            type="text"
+                            value={field.value || "#3B82F6"}
+                            onChange={field.onChange}
+                            className="flex-1"
+                            data-testid="input-primary-color-text"
+                          />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
                   )}
-                  <ObjectUploader
-                    maxNumberOfFiles={1}
-                    maxFileSize={5242880}
-                    onGetUploadParameters={handleLogoUpload}
-                    onComplete={handleLogoComplete}
-                    buttonClassName="data-[testid]:button-upload-logo"
-                  >
-                    <Upload className="w-4 h-4 mr-2" />
-                    {logoUrl ? "Change Logo" : "Upload Logo"}
-                  </ObjectUploader>
-                </div>
-              </div>
+                />
 
-              <Button
-                onClick={() => saveMutation.mutate()}
-                disabled={saveMutation.isPending}
-                data-testid="button-save-settings"
-              >
-                {saveMutation.isPending ? "Saving..." : "Save Settings"}
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Public URL</CardTitle>
-              <CardDescription>Share your knowledge base with others</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {kb ? (
-                <div className="space-y-2">
-                  <Input
-                    readOnly
-                    value={`${window.location.origin}/kb/${user?.id}`}
-                    data-testid="input-public-url"
-                  />
-                  <Button variant="outline" asChild data-testid="button-view-public">
-                    <a href={`/kb/${user?.id}`} target="_blank" rel="noopener noreferrer">
-                      View Public Site
-                    </a>
-                  </Button>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">Save your settings to generate a public URL</p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        <div>
-          <Card>
-            <CardHeader>
-              <CardTitle>Preview</CardTitle>
-              <CardDescription>How your knowledge base will look</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div
-                className="border rounded-md p-6"
-                style={{ borderColor: primaryColor }}
-              >
-                <div className="flex items-center gap-3 mb-4">
-                  {logoUrl && (
-                    <img
-                      src={logoUrl}
-                      alt="Logo"
-                      className="w-12 h-12 object-contain"
-                    />
+                <FormField
+                  control={form.control}
+                  name="logoUrl"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Logo</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center gap-4">
+                          {field.value && (
+                            <img
+                              src={field.value}
+                              alt="Logo"
+                              className="w-16 h-16 object-contain border rounded"
+                              data-testid="img-current-logo"
+                            />
+                          )}
+                          <ObjectUploader
+                            maxNumberOfFiles={1}
+                            maxFileSize={5242880}
+                            onGetUploadParameters={handleLogoUpload}
+                            onComplete={handleLogoComplete}
+                            buttonClassName="data-[testid]:button-upload-logo"
+                          >
+                            <Upload className="w-4 h-4 mr-2" />
+                            {field.value ? "Change Logo" : "Upload Logo"}
+                          </ObjectUploader>
+                        </div>
+                      </FormControl>
+                      <FormDescription>Upload a logo for your knowledge base</FormDescription>
+                      <FormMessage />
+                    </FormItem>
                   )}
-                  <h2 className="text-2xl font-bold">{siteTitle}</h2>
-                </div>
-                <div className="h-12 rounded" style={{ backgroundColor: primaryColor + "20" }}>
-                  <div
-                    className="h-full w-1/3 rounded flex items-center justify-center text-sm font-medium text-white"
-                    style={{ backgroundColor: primaryColor }}
-                  >
-                    Sample Button
+                />
+
+                <Button
+                  type="submit"
+                  disabled={saveMutation.isPending || isLoading}
+                  data-testid="button-save-settings"
+                >
+                  {saveMutation.isPending ? "Saving..." : "Save Settings"}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Public URL</CardTitle>
+                <CardDescription>Share your knowledge base with others</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {kb ? (
+                  <div className="space-y-2">
+                    <Input
+                      readOnly
+                      value={`${window.location.origin}/kb/${user?.id}`}
+                      data-testid="input-public-url"
+                    />
+                    <Button variant="outline" asChild data-testid="button-view-public">
+                      <a href={`/kb/${user?.id}`} target="_blank" rel="noopener noreferrer">
+                        View Public Site
+                      </a>
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Save your settings to generate a public URL</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div>
+            <Card>
+              <CardHeader>
+                <CardTitle>Preview</CardTitle>
+                <CardDescription>How your knowledge base will look</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div
+                  className="border rounded-md p-6"
+                  style={{ borderColor: form.watch("primaryColor") || "#3B82F6" }}
+                >
+                  <div className="flex items-center gap-3 mb-4">
+                    {form.watch("logoUrl") && (
+                      <img
+                        src={form.watch("logoUrl") || ""}
+                        alt="Logo"
+                        className="w-12 h-12 object-contain"
+                      />
+                    )}
+                    <h2 className="text-2xl font-bold">{form.watch("siteTitle")}</h2>
+                  </div>
+                  <div className="h-12 rounded" style={{ backgroundColor: (form.watch("primaryColor") || "#3B82F6") + "20" }}>
+                    <div
+                      className="h-full w-1/3 rounded flex items-center justify-center text-sm font-medium text-white"
+                      style={{ backgroundColor: form.watch("primaryColor") || "#3B82F6" }}
+                    >
+                      Sample Button
+                    </div>
                   </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+              </CardContent>
+            </Card>
+          </div>
+        </form>
+      </Form>
     </div>
   );
 }

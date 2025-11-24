@@ -1,12 +1,14 @@
-import { useState, useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
@@ -14,6 +16,15 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Bold, Italic, List, ListOrdered, Heading1, Heading2, Undo, Redo } from "lucide-react";
 import type { Article, Category } from "@shared/schema";
+import { insertArticleSchema } from "@shared/schema";
+import { z } from "zod";
+
+const articleFormSchema = insertArticleSchema.extend({
+  title: z.string().min(1, "Title is required"),
+  content: z.string().min(1, "Article content is required"),
+}).omit({ knowledgeBaseId: true });
+
+type ArticleFormValues = z.infer<typeof articleFormSchema>;
 
 export default function ArticleEditor() {
   const params = useParams();
@@ -21,10 +32,17 @@ export default function ArticleEditor() {
   const { toast } = useToast();
   const articleId = params.id;
   const isEditing = articleId && articleId !== "new";
+  const contentFieldOnChangeRef = useRef<((value: string) => void) | null>(null);
 
-  const [title, setTitle] = useState("");
-  const [categoryId, setCategoryId] = useState<string>("");
-  const [isPublic, setIsPublic] = useState(false);
+  const form = useForm<ArticleFormValues>({
+    resolver: zodResolver(articleFormSchema),
+    defaultValues: {
+      title: "",
+      categoryId: null,
+      isPublic: false,
+      content: "",
+    },
+  });
 
   const { data: article } = useQuery<Article>({
     queryKey: ["/api/articles", articleId],
@@ -43,31 +61,33 @@ export default function ArticleEditor() {
         class: "prose prose-sm sm:prose lg:prose-lg mx-auto focus:outline-none min-h-[400px] p-8",
       },
     },
+    onUpdate: ({ editor }) => {
+      const html = editor.getHTML();
+      form.setValue("content", html, { shouldValidate: true });
+      if (contentFieldOnChangeRef.current) {
+        contentFieldOnChangeRef.current(html);
+      }
+    },
   });
 
   useEffect(() => {
     if (article && editor) {
-      setTitle(article.title);
-      setCategoryId(article.categoryId || "");
-      setIsPublic(article.isPublic);
+      form.reset({
+        title: article.title,
+        categoryId: article.categoryId,
+        isPublic: article.isPublic,
+        content: article.content,
+      });
       editor.commands.setContent(article.content);
     }
-  }, [article, editor]);
+  }, [article, editor, form]);
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
-      const content = editor?.getHTML() || "";
-      const data = {
-        title,
-        content,
-        categoryId: categoryId || null,
-        isPublic,
-      };
-
+    mutationFn: async (formData: ArticleFormValues) => {
       if (isEditing) {
-        await apiRequest("PUT", `/api/articles/${articleId}`, data);
+        await apiRequest("PUT", `/api/articles/${articleId}`, formData);
       } else {
-        await apiRequest("POST", "/api/articles", data);
+        await apiRequest("POST", "/api/articles", formData);
       }
     },
     onSuccess: () => {
@@ -98,49 +118,65 @@ export default function ArticleEditor() {
     },
   });
 
+  const onSubmit = (data: ArticleFormValues) => {
+    const normalizedData = {
+      ...data,
+      categoryId: data.categoryId || null,
+    };
+    saveMutation.mutate(normalizedData);
+  };
+
   if (!editor) {
     return null;
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="border-b bg-card sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-4">
-          <h1 className="text-xl font-semibold">{isEditing ? "Edit Article" : "New Article"}</h1>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => navigate("/articles")} data-testid="button-cancel">
-              Cancel
-            </Button>
-            <Button
-              onClick={() => saveMutation.mutate()}
-              disabled={!title || saveMutation.isPending}
-              data-testid="button-save"
-            >
-              {saveMutation.isPending ? "Saving..." : "Save Article"}
-            </Button>
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="min-h-screen bg-background">
+        <div className="border-b bg-card sticky top-0 z-10">
+          <div className="max-w-7xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-4">
+            <h1 className="text-xl font-semibold">{isEditing ? "Edit Article" : "New Article"}</h1>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={() => navigate("/articles")} data-testid="button-cancel">
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={saveMutation.isPending}
+                data-testid="button-save"
+              >
+                {saveMutation.isPending ? "Saving..." : "Save Article"}
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <div className="grid lg:grid-cols-[1fr_300px] gap-8">
-          <div>
-            <div className="mb-6">
-              <Label htmlFor="title" className="text-base mb-2">Article Title</Label>
-              <Input
-                id="title"
-                type="text"
-                placeholder="Enter article title..."
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="text-lg h-12"
-                data-testid="input-title"
+        <div className="max-w-7xl mx-auto px-4 py-8">
+          <div className="grid lg:grid-cols-[1fr_300px] gap-8">
+            <div>
+              <FormField
+                control={form.control}
+                name="title"
+                render={({ field }) => (
+                  <FormItem className="mb-6">
+                    <FormLabel className="text-base">Article Title</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        placeholder="Enter article title..."
+                        className="text-lg h-12"
+                        data-testid="input-title"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-            </div>
 
             <Card className="p-2 mb-4">
               <div className="flex flex-wrap gap-1">
                 <Button
+                  type="button"
                   variant={editor.isActive("bold") ? "secondary" : "ghost"}
                   size="sm"
                   onClick={() => editor.chain().focus().toggleBold().run()}
@@ -149,6 +185,7 @@ export default function ArticleEditor() {
                   <Bold className="w-4 h-4" />
                 </Button>
                 <Button
+                  type="button"
                   variant={editor.isActive("italic") ? "secondary" : "ghost"}
                   size="sm"
                   onClick={() => editor.chain().focus().toggleItalic().run()}
@@ -157,6 +194,7 @@ export default function ArticleEditor() {
                   <Italic className="w-4 h-4" />
                 </Button>
                 <Button
+                  type="button"
                   variant={editor.isActive("heading", { level: 1 }) ? "secondary" : "ghost"}
                   size="sm"
                   onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
@@ -165,6 +203,7 @@ export default function ArticleEditor() {
                   <Heading1 className="w-4 h-4" />
                 </Button>
                 <Button
+                  type="button"
                   variant={editor.isActive("heading", { level: 2 }) ? "secondary" : "ghost"}
                   size="sm"
                   onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
@@ -173,6 +212,7 @@ export default function ArticleEditor() {
                   <Heading2 className="w-4 h-4" />
                 </Button>
                 <Button
+                  type="button"
                   variant={editor.isActive("bulletList") ? "secondary" : "ghost"}
                   size="sm"
                   onClick={() => editor.chain().focus().toggleBulletList().run()}
@@ -181,6 +221,7 @@ export default function ArticleEditor() {
                   <List className="w-4 h-4" />
                 </Button>
                 <Button
+                  type="button"
                   variant={editor.isActive("orderedList") ? "secondary" : "ghost"}
                   size="sm"
                   onClick={() => editor.chain().focus().toggleOrderedList().run()}
@@ -189,6 +230,7 @@ export default function ArticleEditor() {
                   <ListOrdered className="w-4 h-4" />
                 </Button>
                 <Button
+                  type="button"
                   variant="ghost"
                   size="sm"
                   onClick={() => editor.chain().focus().undo().run()}
@@ -198,6 +240,7 @@ export default function ArticleEditor() {
                   <Undo className="w-4 h-4" />
                 </Button>
                 <Button
+                  type="button"
                   variant="ghost"
                   size="sm"
                   onClick={() => editor.chain().focus().redo().run()}
@@ -209,9 +252,27 @@ export default function ArticleEditor() {
               </div>
             </Card>
 
-            <Card className="overflow-hidden">
-              <EditorContent editor={editor} data-testid="editor-content" />
-            </Card>
+            <Controller
+              control={form.control}
+              name="content"
+              render={({ field, fieldState }) => {
+                contentFieldOnChangeRef.current = field.onChange;
+                return (
+                  <FormItem>
+                    <FormControl>
+                      <Card className="overflow-hidden">
+                        <EditorContent editor={editor} data-testid="editor-content" />
+                      </Card>
+                    </FormControl>
+                    {fieldState.error && (
+                      <p className="text-sm font-medium text-destructive">
+                        {fieldState.error.message}
+                      </p>
+                    )}
+                  </FormItem>
+                );
+              }}
+            />
           </div>
 
           <div className="space-y-6">
@@ -219,36 +280,59 @@ export default function ArticleEditor() {
               <h3 className="font-semibold mb-4">Article Settings</h3>
               
               <div className="space-y-4">
-                <div>
-                  <Label htmlFor="category" className="mb-2">Category</Label>
-                  <Select value={categoryId} onValueChange={setCategoryId}>
-                    <SelectTrigger id="category" data-testid="select-category">
-                      <SelectValue placeholder="Select category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="">Uncategorized</SelectItem>
-                      {categories?.map((category) => (
-                        <SelectItem key={category.id} value={category.id}>
-                          {category.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                <FormField
+                  control={form.control}
+                  name="categoryId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Category</FormLabel>
+                      <Select
+                        value={field.value || ""}
+                        onValueChange={(value) => field.onChange(value || null)}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-category">
+                            <SelectValue placeholder="Select category" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="">Uncategorized</SelectItem>
+                          {categories?.map((category) => (
+                            <SelectItem key={category.id} value={category.id}>
+                              {category.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="public" className="cursor-pointer">
-                    Make Public
-                  </Label>
-                  <Switch
-                    id="public"
-                    checked={isPublic}
-                    onCheckedChange={setIsPublic}
-                    data-testid="switch-public"
-                  />
-                </div>
+                <FormField
+                  control={form.control}
+                  name="isPublic"
+                  render={({ field }) => (
+                    <FormItem>
+                      <div className="flex items-center justify-between">
+                        <FormLabel className="cursor-pointer">Make Public</FormLabel>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            data-testid="switch-public"
+                          />
+                        </FormControl>
+                      </div>
+                      <FormDescription>
+                        Public articles appear in your knowledge base
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-                {isPublic && (
+                {form.watch("isPublic") && (
                   <p className="text-xs text-muted-foreground">
                     This article will be visible on your public knowledge base
                   </p>
@@ -258,6 +342,7 @@ export default function ArticleEditor() {
           </div>
         </div>
       </div>
-    </div>
+      </form>
+    </Form>
   );
 }

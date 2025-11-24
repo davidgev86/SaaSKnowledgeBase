@@ -1,32 +1,47 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/EmptyState";
 import { Plus, FolderOpen, Edit, Trash2 } from "lucide-react";
 import type { Category } from "@shared/schema";
+import { insertCategorySchema } from "@shared/schema";
+import { z } from "zod";
+
+const categoryFormSchema = insertCategorySchema.extend({
+  name: z.string().min(1, "Category name is required"),
+}).omit({ knowledgeBaseId: true, order: true });
+
+type CategoryFormValues = z.infer<typeof categoryFormSchema>;
 
 export default function Categories() {
   const { toast } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+
+  const form = useForm<CategoryFormValues>({
+    resolver: zodResolver(categoryFormSchema),
+    defaultValues: {
+      name: "",
+      description: "",
+    },
+  });
 
   const { data: categories, isLoading } = useQuery<Category[]>({
     queryKey: ["/api/categories"],
   });
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
-      const data = { name, description };
+    mutationFn: async (data: CategoryFormValues) => {
       if (editingCategory) {
         await apiRequest("PUT", `/api/categories/${editingCategory.id}`, data);
       } else {
@@ -61,6 +76,10 @@ export default function Categories() {
     },
   });
 
+  const onSubmit = (data: CategoryFormValues) => {
+    saveMutation.mutate(data);
+  };
+
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       await apiRequest("DELETE", `/api/categories/${id}`);
@@ -93,16 +112,20 @@ export default function Categories() {
   });
 
   const resetForm = () => {
-    setName("");
-    setDescription("");
+    form.reset({
+      name: "",
+      description: "",
+    });
     setEditingCategory(null);
     setIsDialogOpen(false);
   };
 
   const openEditDialog = (category: Category) => {
     setEditingCategory(category);
-    setName(category.name);
-    setDescription(category.description || "");
+    form.reset({
+      name: category.name,
+      description: category.description || "",
+    });
     setIsDialogOpen(true);
   };
 
@@ -136,40 +159,57 @@ export default function Categories() {
                 {editingCategory ? "Update category details" : "Add a new category for your articles"}
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div>
-                <Label htmlFor="name">Name</Label>
-                <Input
-                  id="name"
-                  placeholder="Getting Started"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  data-testid="input-category-name"
+            <Form {...form}>
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 py-4">
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Name</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="Getting Started"
+                          data-testid="input-category-name"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-              </div>
-              <div>
-                <Label htmlFor="description">Description</Label>
-                <Textarea
-                  id="description"
-                  placeholder="Articles to help you get started..."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  data-testid="textarea-category-description"
+                <FormField
+                  control={form.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          {...field}
+                          value={field.value || ""}
+                          placeholder="Articles to help you get started..."
+                          data-testid="textarea-category-description"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={resetForm} data-testid="button-cancel-category">
-                Cancel
-              </Button>
-              <Button
-                onClick={() => saveMutation.mutate()}
-                disabled={!name || saveMutation.isPending}
-                data-testid="button-save-category"
-              >
-                {saveMutation.isPending ? "Saving..." : editingCategory ? "Update" : "Create"}
-              </Button>
-            </DialogFooter>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={resetForm} data-testid="button-cancel-category">
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={saveMutation.isPending}
+                    data-testid="button-save-category"
+                  >
+                    {saveMutation.isPending ? "Saving..." : editingCategory ? "Update" : "Create"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </Form>
           </DialogContent>
         </Dialog>
       </div>
