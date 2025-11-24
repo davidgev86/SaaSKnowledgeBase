@@ -287,8 +287,8 @@ export default function ArticleEditor() {
                     <FormItem>
                       <FormLabel>Category</FormLabel>
                       <Select
-                        value={field.value || ""}
-                        onValueChange={(value) => field.onChange(value || null)}
+                        value={field.value || "uncategorized"}
+                        onValueChange={(value) => field.onChange(value === "uncategorized" ? null : value)}
                       >
                         <FormControl>
                           <SelectTrigger data-testid="select-category">
@@ -296,7 +296,7 @@ export default function ArticleEditor() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="">Uncategorized</SelectItem>
+                          <SelectItem value="uncategorized">Uncategorized</SelectItem>
                           {categories?.map((category) => (
                             <SelectItem key={category.id} value={category.id}>
                               {category.name}
