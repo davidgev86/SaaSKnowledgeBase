@@ -1,4 +1,5 @@
 import { type Server } from "node:http";
+import { createServer } from "node:http";
 
 import express, {
   type Express,
@@ -8,6 +9,7 @@ import express, {
 } from "express";
 
 import { registerRoutes } from "./routes";
+import { setupAuth } from "./replitAuth";
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -67,7 +69,8 @@ app.use((req, res, next) => {
 export default async function runApp(
   setup: (app: Express, server: Server) => Promise<void>,
 ) {
-  const server = await registerRoutes(app);
+  await setupAuth(app);
+  registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
@@ -76,6 +79,8 @@ export default async function runApp(
     res.status(status).json({ message });
     throw err;
   });
+
+  const server = createServer(app);
 
   // importantly run the final setup after setting up all the other routes so
   // the catch-all route doesn't interfere with the other routes
