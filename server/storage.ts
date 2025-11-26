@@ -23,7 +23,7 @@ import {
   type TeamMember,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, ilike, or } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -251,6 +251,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async searchArticles(kbId: string, query: string): Promise<Article[]> {
+    const searchPattern = `%${query}%`;
     return db
       .select()
       .from(articles)
@@ -258,7 +259,10 @@ export class DatabaseStorage implements IStorage {
         and(
           eq(articles.knowledgeBaseId, kbId),
           eq(articles.isPublic, true),
-          sql`(${articles.title} ILIKE ${`%${query}%`} OR ${articles.content} ILIKE ${`%${query}%`})`
+          or(
+            ilike(articles.title, searchPattern),
+            ilike(articles.content, searchPattern)
+          )
         )
       )
       .orderBy(desc(articles.updatedAt));
