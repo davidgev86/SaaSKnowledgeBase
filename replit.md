@@ -17,6 +17,7 @@ Preferred communication style: Simple, everyday language.
 - **Articles**: Create, edit, delete, and toggle visibility with quick publish/unpublish
 - **Categories**: Organize articles into categories
 - **Public Help Center**: Searchable public-facing documentation site
+- **Article Versioning**: Automatic version history on article saves, view revisions in sidebar, restore to previous versions
 
 ### Bug Fixes Applied
 - Logo upload: Fixed JSON response parsing and object path construction (`/objects/${param}`)
@@ -28,6 +29,7 @@ Preferred communication style: Simple, everyday language.
 - Search queries use Drizzle's `ilike()` function, not raw SQL template literals
 - Team collaboration uses single-KB model (one KB per owner, members invited to that KB)
 - Categories only display on public site when containing at least one public article (intentional UX)
+- Article versioning: Revisions auto-increment version number on each save; restore creates new revision before reverting
 
 ## System Architecture
 
@@ -71,6 +73,7 @@ Preferred communication style: Simple, everyday language.
 - Articles table with rich content, category associations, and public/private visibility
 - Categories table for organizing articles
 - Analytics tables for tracking views, searches, and article feedback
+- Article revisions table for version history with complete article snapshots
 - Sessions table for authentication session persistence
 
 **Relationships**: The schema uses foreign key constraints with cascade deletes to maintain referential integrity. Articles belong to categories and knowledge bases, analytics are tied to articles.
