@@ -124,7 +124,8 @@ export default function Settings() {
       const response = await apiRequest("PUT", "/api/logos", {
         logoURL: uploadedFile.uploadURL,
       });
-      const logoPath = response.objectPath;
+      const responseData = await response.json();
+      const logoPath = responseData.objectPath;
       form.setValue("logoUrl", logoPath);
       
       // Auto-save the settings with the new logo
