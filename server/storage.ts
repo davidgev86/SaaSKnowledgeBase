@@ -7,6 +7,7 @@ import {
   analyticsSearches,
   articleFeedback,
   teamMembers,
+  articleRevisions,
   type User,
   type UpsertUser,
   type KnowledgeBase,
@@ -21,6 +22,8 @@ import {
   type InsertTeamMember,
   type UpdateTeamMember,
   type TeamMember,
+  type ArticleRevision,
+  type InsertArticleRevision,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql, ilike, or } from "drizzle-orm";
@@ -65,6 +68,11 @@ export interface IStorage {
   createTeamMember(member: InsertTeamMember): Promise<TeamMember>;
   updateTeamMember(id: string, member: UpdateTeamMember): Promise<TeamMember>;
   deleteTeamMember(id: string): Promise<void>;
+
+  getRevisionsByArticleId(articleId: string): Promise<ArticleRevision[]>;
+  getRevisionByVersion(articleId: string, version: number): Promise<ArticleRevision | undefined>;
+  createRevision(revision: InsertArticleRevision): Promise<ArticleRevision>;
+  getLatestRevisionVersion(articleId: string): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -334,6 +342,40 @@ export class DatabaseStorage implements IStorage {
 
   async deleteTeamMember(id: string): Promise<void> {
     await db.delete(teamMembers).where(eq(teamMembers.id, id));
+  }
+
+  async getRevisionsByArticleId(articleId: string): Promise<ArticleRevision[]> {
+    return db
+      .select()
+      .from(articleRevisions)
+      .where(eq(articleRevisions.articleId, articleId))
+      .orderBy(desc(articleRevisions.version));
+  }
+
+  async getRevisionByVersion(articleId: string, version: number): Promise<ArticleRevision | undefined> {
+    const [revision] = await db
+      .select()
+      .from(articleRevisions)
+      .where(
+        and(
+          eq(articleRevisions.articleId, articleId),
+          eq(articleRevisions.version, version)
+        )
+      );
+    return revision;
+  }
+
+  async createRevision(revisionData: InsertArticleRevision): Promise<ArticleRevision> {
+    const [revision] = await db.insert(articleRevisions).values(revisionData).returning();
+    return revision;
+  }
+
+  async getLatestRevisionVersion(articleId: string): Promise<number> {
+    const [result] = await db
+      .select({ maxVersion: sql<number>`COALESCE(MAX(${articleRevisions.version}), 0)` })
+      .from(articleRevisions)
+      .where(eq(articleRevisions.articleId, articleId));
+    return result?.maxVersion ?? 0;
   }
 }
 

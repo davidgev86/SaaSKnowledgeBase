@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm, Controller } from "react-hook-form";
@@ -11,11 +11,14 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { Bold, Italic, List, ListOrdered, Heading1, Heading2, Undo, Redo } from "lucide-react";
-import type { Article, Category } from "@shared/schema";
+import { Bold, Italic, List, ListOrdered, Heading1, Heading2, Undo, Redo, History, RotateCcw } from "lucide-react";
+import { format } from "date-fns";
+import type { Article, Category, ArticleRevision } from "@shared/schema";
 import { insertArticleSchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -33,6 +36,8 @@ export default function ArticleEditor() {
   const articleId = params.id;
   const isEditing = articleId && articleId !== "new";
   const contentFieldOnChangeRef = useRef<((value: string) => void) | null>(null);
+  const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [selectedRevision, setSelectedRevision] = useState<ArticleRevision | null>(null);
 
   const form = useForm<ArticleFormValues>({
     resolver: zodResolver(articleFormSchema),
@@ -51,6 +56,45 @@ export default function ArticleEditor() {
 
   const { data: categories } = useQuery<Category[]>({
     queryKey: ["/api/categories"],
+  });
+
+  const { data: revisions, isLoading: revisionsLoading } = useQuery<ArticleRevision[]>({
+    queryKey: ["/api/articles", articleId, "revisions"],
+    enabled: !!isEditing,
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: async (version: number) => {
+      await apiRequest("POST", `/api/articles/${articleId}/restore/${version}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/articles", articleId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/articles", articleId, "revisions"] });
+      setRestoreDialogOpen(false);
+      setSelectedRevision(null);
+      toast({
+        title: "Success",
+        description: "Article restored to previous version",
+      });
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Error",
+        description: "Failed to restore article",
+        variant: "destructive",
+      });
+    },
   });
 
   const editor = useEditor({
@@ -339,9 +383,109 @@ export default function ArticleEditor() {
                 )}
               </div>
             </Card>
+
+            {isEditing && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <History className="w-4 h-4" />
+                    Version History
+                  </CardTitle>
+                  <CardDescription>
+                    Previous versions of this article
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {revisionsLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading...</p>
+                  ) : revisions && revisions.length > 0 ? (
+                    <ScrollArea className="h-[200px]">
+                      <div className="space-y-2">
+                        {revisions.map((revision) => (
+                          <div
+                            key={revision.id}
+                            className="flex items-center justify-between p-2 rounded-md border bg-muted/30"
+                            data-testid={`revision-${revision.version}`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium">
+                                Version {revision.version}
+                              </p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                {revision.createdAt
+                                  ? format(new Date(revision.createdAt), "MMM d, yyyy h:mm a")
+                                  : "Unknown date"}
+                              </p>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedRevision(revision);
+                                setRestoreDialogOpen(true);
+                              }}
+                              data-testid={`button-restore-${revision.version}`}
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No previous versions yet. Versions are created when you save changes.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
       </div>
+
+      <Dialog open={restoreDialogOpen} onOpenChange={setRestoreDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Restore Version {selectedRevision?.version}?</DialogTitle>
+            <DialogDescription>
+              This will restore the article to version {selectedRevision?.version} from{" "}
+              {selectedRevision?.createdAt
+                ? format(new Date(selectedRevision.createdAt), "MMM d, yyyy h:mm a")
+                : "unknown date"}.
+              A new version will be saved with your current content before restoring.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedRevision && (
+            <div className="border rounded-md p-3 bg-muted/30 max-h-[200px] overflow-auto">
+              <p className="text-sm font-medium mb-2">{selectedRevision.title}</p>
+              <div
+                className="text-xs text-muted-foreground prose prose-sm"
+                dangerouslySetInnerHTML={{ __html: selectedRevision.content.substring(0, 500) + (selectedRevision.content.length > 500 ? "..." : "") }}
+              />
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRestoreDialogOpen(false)}
+              data-testid="button-cancel-restore"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => selectedRevision && restoreMutation.mutate(selectedRevision.version)}
+              disabled={restoreMutation.isPending}
+              data-testid="button-confirm-restore"
+            >
+              {restoreMutation.isPending ? "Restoring..." : "Restore Version"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </form>
     </Form>
   );

@@ -154,8 +154,110 @@ export function registerRoutes(app: Express) {
         return res.status(403).json({ message: "You don't have permission to edit this article" });
       }
       
+      // Save current version as a revision before updating
+      const latestVersion = await storage.getLatestRevisionVersion(req.params.id);
+      await storage.createRevision({
+        articleId: req.params.id,
+        version: latestVersion + 1,
+        title: existing.title,
+        content: existing.content,
+        categoryId: existing.categoryId,
+        isPublic: existing.isPublic,
+        createdBy: userId,
+      });
+      
       const article = await storage.updateArticle(req.params.id, req.body);
       res.json(article);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/articles/:id/revisions", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const article = await storage.getArticleById(req.params.id);
+      if (!article) {
+        return res.status(404).json({ message: "Article not found" });
+      }
+      
+      const userRole = await storage.getUserRole(userId, article.knowledgeBaseId);
+      if (!userRole) {
+        return res.status(403).json({ message: "You don't have access to this article" });
+      }
+      
+      const revisions = await storage.getRevisionsByArticleId(req.params.id);
+      res.json(revisions);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/articles/:id/revisions/:version", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const article = await storage.getArticleById(req.params.id);
+      if (!article) {
+        return res.status(404).json({ message: "Article not found" });
+      }
+      
+      const userRole = await storage.getUserRole(userId, article.knowledgeBaseId);
+      if (!userRole) {
+        return res.status(403).json({ message: "You don't have access to this article" });
+      }
+      
+      const version = parseInt(req.params.version, 10);
+      const revision = await storage.getRevisionByVersion(req.params.id, version);
+      if (!revision) {
+        return res.status(404).json({ message: "Revision not found" });
+      }
+      
+      res.json(revision);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/articles/:id/restore/:version", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const article = await storage.getArticleById(req.params.id);
+      if (!article) {
+        return res.status(404).json({ message: "Article not found" });
+      }
+      
+      const canEdit = await checkUserCanEdit(userId, article.knowledgeBaseId);
+      if (!canEdit) {
+        return res.status(403).json({ message: "You don't have permission to restore this article" });
+      }
+      
+      const version = parseInt(req.params.version, 10);
+      const revision = await storage.getRevisionByVersion(req.params.id, version);
+      if (!revision) {
+        return res.status(404).json({ message: "Revision not found" });
+      }
+      
+      // Save current version as a revision before restoring
+      const latestVersion = await storage.getLatestRevisionVersion(req.params.id);
+      await storage.createRevision({
+        articleId: req.params.id,
+        version: latestVersion + 1,
+        title: article.title,
+        content: article.content,
+        categoryId: article.categoryId,
+        isPublic: article.isPublic,
+        createdBy: userId,
+      });
+      
+      // Restore the article from the revision
+      const restoredArticle = await storage.updateArticle(req.params.id, {
+        title: revision.title,
+        content: revision.content,
+        categoryId: revision.categoryId,
+        isPublic: revision.isPublic,
+      });
+      
+      res.json(restoredArticle);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }

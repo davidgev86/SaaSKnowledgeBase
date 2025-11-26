@@ -129,6 +129,38 @@ export const insertArticleSchema = createInsertSchema(articles).omit({
 export type InsertArticle = z.infer<typeof insertArticleSchema>;
 export type Article = typeof articles.$inferSelect;
 
+// Article Revisions table - Version history for articles
+export const articleRevisions = pgTable("article_revisions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  articleId: varchar("article_id").notNull().references(() => articles.id, { onDelete: "cascade" }),
+  version: integer("version").notNull(),
+  title: varchar("title").notNull(),
+  content: text("content").notNull(),
+  categoryId: varchar("category_id"),
+  isPublic: boolean("is_public").notNull().default(false),
+  createdBy: varchar("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const articleRevisionsRelations = relations(articleRevisions, ({ one }) => ({
+  article: one(articles, {
+    fields: [articleRevisions.articleId],
+    references: [articles.id],
+  }),
+  author: one(users, {
+    fields: [articleRevisions.createdBy],
+    references: [users.id],
+  }),
+}));
+
+export const insertArticleRevisionSchema = createInsertSchema(articleRevisions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertArticleRevision = z.infer<typeof insertArticleRevisionSchema>;
+export type ArticleRevision = typeof articleRevisions.$inferSelect;
+
 // Analytics Views table - Track article views
 export const analyticsViews = pgTable("analytics_views", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
