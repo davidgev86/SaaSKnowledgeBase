@@ -77,9 +77,7 @@ export function registerRoutes(app: Express) {
       if (!existing || existing.userId !== userId) {
         return res.status(403).json({ message: "Forbidden" });
       }
-      console.log("[DEBUG] KB Update - Received body:", JSON.stringify(req.body));
       const kb = await storage.updateKnowledgeBase(req.params.id, req.body);
-      console.log("[DEBUG] KB Update - Saved KB:", JSON.stringify(kb));
       res.json(kb);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
