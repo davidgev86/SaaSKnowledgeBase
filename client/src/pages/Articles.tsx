@@ -56,6 +56,37 @@ export default function Articles() {
     },
   });
 
+  const togglePublicMutation = useMutation({
+    mutationFn: async ({ id, isPublic }: { id: string; isPublic: boolean }) => {
+      await apiRequest("PUT", `/api/articles/${id}`, { isPublic });
+    },
+    onSuccess: (_, { isPublic }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
+      toast({
+        title: "Success",
+        description: `Article is now ${isPublic ? "public" : "private"}`,
+      });
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Error",
+        description: "Failed to update article visibility",
+        variant: "destructive",
+      });
+    },
+  });
+
   const filteredArticles = articles?.filter((article) =>
     article.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -119,12 +150,22 @@ export default function Articles() {
                   <div className="flex items-start gap-3 mb-2">
                     <h3 className="text-lg font-semibold truncate" data-testid={`text-article-title-${article.id}`}>{article.title}</h3>
                     {article.isPublic ? (
-                      <Badge variant="secondary" className="shrink-0" data-testid={`badge-public-${article.id}`}>
+                      <Badge 
+                        variant="secondary" 
+                        className="shrink-0 cursor-pointer" 
+                        onClick={() => togglePublicMutation.mutate({ id: article.id, isPublic: false })}
+                        data-testid={`badge-public-${article.id}`}
+                      >
                         <Eye className="w-3 h-3 mr-1" />
                         Public
                       </Badge>
                     ) : (
-                      <Badge variant="outline" className="shrink-0" data-testid={`badge-private-${article.id}`}>
+                      <Badge 
+                        variant="outline" 
+                        className="shrink-0 cursor-pointer" 
+                        onClick={() => togglePublicMutation.mutate({ id: article.id, isPublic: true })}
+                        data-testid={`badge-private-${article.id}`}
+                      >
                         <EyeOff className="w-3 h-3 mr-1" />
                         Private
                       </Badge>
