@@ -480,7 +480,8 @@ export function registerRoutes(app: Express) {
   app.get("/objects/*", async (req, res) => {
     try {
       const userId = getUserId(req);
-      const objectPath = `/objects/${req.params[0]}`;
+      const param = (req.params as Record<string, string>)[0] || "";
+      const objectPath = `/objects/${param}`;
       const objectFile = await objectStorageService.getObjectEntityFile(objectPath);
       const canAccess = await objectStorageService.canAccessObjectEntity({
         userId,

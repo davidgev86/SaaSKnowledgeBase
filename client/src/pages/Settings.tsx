@@ -117,7 +117,7 @@ export default function Settings() {
   };
 
   const handleLogoComplete = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
-    const uploadedFile = result.successful[0];
+    const uploadedFile = result.successful?.[0];
     if (!uploadedFile) return;
 
     try {

@@ -8,6 +8,27 @@ A full-stack SaaS application for creating and managing knowledge bases with pub
 
 Preferred communication style: Simple, everyday language.
 
+## Recent Updates (November 2025)
+
+### Completed MVP Features
+- **Team Collaboration**: Invite team members, assign roles (owner/admin/contributor/viewer), manage permissions
+- **Analytics Dashboard**: Track article views, search queries, and feedback
+- **Settings**: Configure site title, primary color, upload logos
+- **Articles**: Create, edit, delete, and toggle visibility with quick publish/unpublish
+- **Categories**: Organize articles into categories
+- **Public Help Center**: Searchable public-facing documentation site
+
+### Bug Fixes Applied
+- Logo upload: Fixed JSON response parsing and object path construction (`/objects/${param}`)
+- Public search: Uses Drizzle ORM `ilike()` and `or()` operators for proper search
+- Article visibility toggle: Added quick toggle in article list for publish/unpublish
+
+### Technical Notes
+- Object serving route must construct paths as `/objects/${param}` not `/${param}`
+- Search queries use Drizzle's `ilike()` function, not raw SQL template literals
+- Team collaboration uses single-KB model (one KB per owner, members invited to that KB)
+- Categories only display on public site when containing at least one public article (intentional UX)
+
 ## System Architecture
 
 ### Frontend Architecture
