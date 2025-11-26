@@ -124,10 +124,22 @@ export default function Settings() {
       const response = await apiRequest("PUT", "/api/logos", {
         logoURL: uploadedFile.uploadURL,
       });
-      form.setValue("logoUrl", response.objectPath);
+      const logoPath = response.objectPath;
+      form.setValue("logoUrl", logoPath);
+      
+      // Auto-save the settings with the new logo
+      if (kb) {
+        const currentValues = form.getValues();
+        await apiRequest("PUT", `/api/knowledge-bases/${kb.id}`, {
+          ...currentValues,
+          logoUrl: logoPath,
+        });
+        queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases"] });
+      }
+      
       toast({
         title: "Success",
-        description: "Logo uploaded successfully",
+        description: "Logo uploaded and saved successfully",
       });
     } catch (error) {
       toast({
