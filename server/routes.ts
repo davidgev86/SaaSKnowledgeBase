@@ -408,6 +408,25 @@ export function registerRoutes(app: Express) {
     }
   });
 
+  app.get("/api/kb/:userId/search/:query", async (req, res) => {
+    try {
+      const query = req.params.query;
+      if (!query) {
+        return res.json([]);
+      }
+
+      const kb = await storage.getKnowledgeBaseByUserId(req.params.userId);
+      if (!kb) {
+        return res.json([]);
+      }
+
+      const articles = await storage.searchArticles(kb.id, query);
+      res.json(articles);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.post("/api/kb/:userId/search", async (req, res) => {
     try {
       const { query } = req.body;
