@@ -63,7 +63,7 @@ export default function Team() {
     },
   });
 
-  const { data: user } = useQuery({
+  const { data: user } = useQuery<{ id: string } | null>({
     queryKey: ["/api/auth/user"],
   });
 
@@ -84,7 +84,7 @@ export default function Team() {
 
   const inviteMutation = useMutation({
     mutationFn: async (data: z.infer<typeof inviteFormSchema>) => {
-      return await apiRequest("/api/team/invite", "POST", data);
+      return await apiRequest("POST", "/api/team/invite", data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/team/members"] });
@@ -106,7 +106,7 @@ export default function Team() {
 
   const updateRoleMutation = useMutation({
     mutationFn: async ({ memberId, role }: { memberId: string; role: string }) => {
-      return await apiRequest(`/api/team/${memberId}/role`, "PUT", { role });
+      return await apiRequest("PUT", `/api/team/${memberId}/role`, { role });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/team/members"] });
@@ -126,7 +126,7 @@ export default function Team() {
 
   const deleteMutation = useMutation({
     mutationFn: async (memberId: string) => {
-      return await apiRequest(`/api/team/${memberId}`, "DELETE");
+      return await apiRequest("DELETE", `/api/team/${memberId}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/team/members"] });
