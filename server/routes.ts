@@ -427,7 +427,16 @@ export function registerRoutes(app: Express) {
       if (!kb) {
         return res.json({ totalSearches: 0, recentSearches: [] });
       }
-      const stats = await storage.getSearchStats(kb.id);
+      
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+      
+      if (req.query.startDate && req.query.endDate) {
+        startDate = new Date(req.query.startDate as string);
+        endDate = new Date(req.query.endDate as string);
+      }
+      
+      const stats = await storage.getSearchStats(kb.id, startDate, endDate);
       res.json(stats);
     } catch (error: any) {
       res.status(500).json({ message: error.message });

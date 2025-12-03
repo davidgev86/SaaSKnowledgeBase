@@ -54,7 +54,7 @@ export interface IStorage {
   getArticleViewStats(kbId: string, startDate?: Date, endDate?: Date): Promise<any>;
 
   trackSearch(search: InsertAnalyticsSearch): Promise<void>;
-  getSearchStats(kbId: string): Promise<any>;
+  getSearchStats(kbId: string, startDate?: Date, endDate?: Date): Promise<any>;
 
   submitArticleFeedback(feedback: InsertArticleFeedback): Promise<void>;
 
@@ -240,14 +240,22 @@ export class DatabaseStorage implements IStorage {
     await db.insert(analyticsSearches).values(searchData);
   }
 
-  async getSearchStats(kbId: string): Promise<any> {
+  async getSearchStats(kbId: string, startDate?: Date, endDate?: Date): Promise<any> {
+    const dateFilter = startDate && endDate
+      ? and(
+          eq(analyticsSearches.knowledgeBaseId, kbId),
+          sql`${analyticsSearches.searchedAt} >= ${startDate}`,
+          sql`${analyticsSearches.searchedAt} <= ${endDate}`
+        )
+      : eq(analyticsSearches.knowledgeBaseId, kbId);
+
     const searchQueries = await db
       .select({
         query: analyticsSearches.query,
         count: sql<number>`count(*)::int`,
       })
       .from(analyticsSearches)
-      .where(eq(analyticsSearches.knowledgeBaseId, kbId))
+      .where(dateFilter!)
       .groupBy(analyticsSearches.query)
       .orderBy(desc(sql`count(*)`))
       .limit(10);
@@ -255,7 +263,7 @@ export class DatabaseStorage implements IStorage {
     const totalSearches = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(analyticsSearches)
-      .where(eq(analyticsSearches.knowledgeBaseId, kbId));
+      .where(dateFilter!);
 
     return {
       totalSearches: totalSearches[0]?.count || 0,
