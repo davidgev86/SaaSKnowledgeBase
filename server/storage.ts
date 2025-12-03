@@ -268,21 +268,46 @@ export class DatabaseStorage implements IStorage {
   }
 
   async searchArticles(kbId: string, query: string): Promise<Article[]> {
-    const searchPattern = `%${query}%`;
-    return db
-      .select()
-      .from(articles)
-      .where(
-        and(
-          eq(articles.knowledgeBaseId, kbId),
-          eq(articles.isPublic, true),
-          or(
-            ilike(articles.title, searchPattern),
-            ilike(articles.content, searchPattern)
-          )
+    const cleanQuery = query.trim();
+    if (!cleanQuery) {
+      return [];
+    }
+
+    const tsQuery = cleanQuery
+      .split(/\s+/)
+      .filter(term => term.length > 0)
+      .map(term => term.replace(/[^\w]/g, ''))
+      .filter(term => term.length > 0)
+      .join(' & ');
+
+    if (!tsQuery) {
+      return [];
+    }
+
+    const results = await db.execute(sql`
+      SELECT 
+        id, knowledge_base_id as "knowledgeBaseId", category_id as "categoryId", 
+        title, content, is_public as "isPublic", 
+        created_at as "createdAt", updated_at as "updatedAt",
+        ts_rank(
+          setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
+          setweight(to_tsvector('english', coalesce(content, '')), 'B'),
+          to_tsquery('english', ${tsQuery + ':*'})
+        ) as rank
+      FROM articles
+      WHERE 
+        knowledge_base_id = ${kbId}
+        AND is_public = true
+        AND (
+          to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, '')) 
+          @@ to_tsquery('english', ${tsQuery + ':*'})
+          OR title ILIKE ${`%${cleanQuery}%`}
         )
-      )
-      .orderBy(desc(articles.updatedAt));
+      ORDER BY rank DESC, updated_at DESC
+      LIMIT 50
+    `);
+
+    return results.rows as Article[];
   }
 
   async getTeamMembersByKnowledgeBaseId(kbId: string): Promise<TeamMember[]> {
