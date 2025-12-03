@@ -2,10 +2,10 @@ import { useState } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Search, BookOpen, FileText } from "lucide-react";
+import { SimpleThemeToggle } from "@/components/ThemeToggle";
 import type { KnowledgeBase, Article, Category } from "@shared/schema";
 
 export default function PublicKnowledgeBase() {
@@ -65,6 +65,7 @@ export default function PublicKnowledgeBase() {
               )}
               <h1 className="text-2xl font-bold">{kb?.siteTitle || "Knowledge Base"}</h1>
             </div>
+            <SimpleThemeToggle />
           </div>
         </div>
       </header>

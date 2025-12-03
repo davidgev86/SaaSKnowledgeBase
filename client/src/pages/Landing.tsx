@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { BookOpen, Search, BarChart3, Palette } from "lucide-react";
+import { SimpleThemeToggle } from "@/components/ThemeToggle";
 
 export default function Landing() {
   return (
@@ -11,9 +12,12 @@ export default function Landing() {
               <BookOpen className="w-6 h-6 text-primary" />
               <span className="text-xl font-semibold">KnowledgeBase</span>
             </div>
-            <Button asChild data-testid="button-login">
-              <a href="/api/login">Sign In</a>
-            </Button>
+            <div className="flex items-center gap-2">
+              <SimpleThemeToggle />
+              <Button asChild data-testid="button-login">
+                <a href="/api/login">Sign In</a>
+              </Button>
+            </div>
           </div>
         </div>
       </nav>

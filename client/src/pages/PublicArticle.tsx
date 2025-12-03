@@ -3,8 +3,8 @@ import { useParams, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { ThumbsUp, ThumbsDown, ChevronLeft } from "lucide-react";
+import { SimpleThemeToggle } from "@/components/ThemeToggle";
 import type { Article, KnowledgeBase } from "@shared/schema";
 
 export default function PublicArticle() {
@@ -59,7 +59,7 @@ export default function PublicArticle() {
                 Back
               </Button>
             </Link>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               {kb?.logoUrl && (
                 <img
                   src={kb.logoUrl}
@@ -68,6 +68,7 @@ export default function PublicArticle() {
                 />
               )}
               <span className="font-semibold">{kb?.siteTitle}</span>
+              <SimpleThemeToggle />
             </div>
           </div>
         </div>

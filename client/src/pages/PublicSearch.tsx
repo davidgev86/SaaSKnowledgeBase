@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Search, FileText } from "lucide-react";
+import { SimpleThemeToggle } from "@/components/ThemeToggle";
 import type { Article, KnowledgeBase } from "@shared/schema";
 
 export default function PublicSearch() {
@@ -60,6 +61,7 @@ export default function PublicSearch() {
                 </h1>
               </Link>
             </div>
+            <SimpleThemeToggle />
           </div>
         </div>
       </header>
