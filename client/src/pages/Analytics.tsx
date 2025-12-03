@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar, ResponsiveContainer } from "recharts";
 import { Eye, Search, TrendingUp, Calendar } from "lucide-react";
-import { format, subDays, startOfDay, endOfDay } from "date-fns";
+import { format, subDays, startOfDay, endOfDay, parse } from "date-fns";
 
 type DateRange = "7d" | "30d" | "90d" | "all";
 
@@ -90,7 +90,7 @@ export default function Analytics() {
     if (!viewsData?.viewsByDate) return [];
     
     return viewsData.viewsByDate.map(item => ({
-      date: format(new Date(item.date), "MMM d"),
+      date: format(parse(item.date, 'yyyy-MM-dd', new Date()), "MMM d"),
       views: item.views,
     }));
   }, [viewsData]);
