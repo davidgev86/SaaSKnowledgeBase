@@ -5,6 +5,7 @@ import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
 import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema, insertTeamMemberSchema } from "@shared/schema";
 import { z } from "zod";
+import { emailService } from "./email";
 
 const inviteSchema = z.object({
   email: z.string().email(),
@@ -641,7 +642,31 @@ export function registerRoutes(app: Express) {
         inviteToken,
         userId: null,
       });
-      res.json(member);
+
+      // Send invite email
+      const inviter = await storage.getUser(userId);
+      const inviterName = inviter?.firstName && inviter?.lastName 
+        ? `${inviter.firstName} ${inviter.lastName}` 
+        : inviter?.email || "A team member";
+      
+      // Build invite URL using the request host
+      const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
+      const host = req.headers["x-forwarded-host"] || req.headers.host || "";
+      const inviteUrl = `${protocol}://${host}/invite/${inviteToken}`;
+
+      const emailResult = await emailService.sendTeamInvite({
+        toEmail: validatedData.email,
+        inviterName,
+        knowledgeBaseName: kb.siteTitle || "Knowledge Base",
+        role: validatedData.role,
+        inviteUrl,
+      });
+
+      res.json({ 
+        ...member, 
+        emailSent: emailResult.success,
+        inviteUrl, // Include for manual sharing if email fails
+      });
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid input", errors: error.errors });

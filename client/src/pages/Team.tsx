@@ -84,16 +84,33 @@ export default function Team() {
 
   const inviteMutation = useMutation({
     mutationFn: async (data: z.infer<typeof inviteFormSchema>) => {
-      return await apiRequest("POST", "/api/team/invite", data);
+      const response = await apiRequest("POST", "/api/team/invite", data);
+      return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/team/members"] });
       setInviteDialogOpen(false);
       inviteForm.reset();
-      toast({
-        title: "Invitation sent",
-        description: "Team member has been invited successfully.",
-      });
+      
+      if (data.emailSent) {
+        toast({
+          title: "Invitation sent",
+          description: `An email has been sent to ${data.invitedEmail} with the invitation link.`,
+        });
+      } else {
+        toast({
+          title: "Invitation created",
+          description: (
+            <div className="space-y-2">
+              <p>Share this link with the invited member:</p>
+              <code className="block text-xs bg-muted p-2 rounded break-all">
+                {data.inviteUrl}
+              </code>
+            </div>
+          ),
+          duration: 15000,
+        });
+      }
     },
     onError: (error: Error) => {
       toast({

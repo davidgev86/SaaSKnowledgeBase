@@ -19,6 +19,7 @@ import Team from "@/pages/Team";
 import PublicKnowledgeBase from "@/pages/PublicKnowledgeBase";
 import PublicArticle from "@/pages/PublicArticle";
 import PublicSearch from "@/pages/PublicSearch";
+import InviteAccept from "@/pages/InviteAccept";
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -42,6 +43,7 @@ function AppContent() {
     return (
       <Switch>
         <Route path="/" component={Landing} />
+        <Route path="/invite/:token" component={InviteAccept} />
         <Route path="/kb/:userId" component={PublicKnowledgeBase} />
         <Route path="/kb/:userId/articles/:articleId" component={PublicArticle} />
         <Route path="/kb/:userId/search" component={PublicSearch} />
@@ -68,6 +70,7 @@ function AppContent() {
               <Route path="/team" component={Team} />
               <Route path="/settings" component={Settings} />
               <Route path="/analytics" component={Analytics} />
+              <Route path="/invite/:token" component={InviteAccept} />
               <Route path="/kb/:userId" component={PublicKnowledgeBase} />
               <Route path="/kb/:userId/articles/:articleId" component={PublicArticle} />
               <Route path="/kb/:userId/search" component={PublicSearch} />

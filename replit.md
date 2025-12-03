@@ -12,6 +12,7 @@ Preferred communication style: Simple, everyday language.
 
 ### Completed MVP Features
 - **Team Collaboration**: Invite team members, assign roles (owner/admin/contributor/viewer), manage permissions
+- **Email Notifications Framework**: Pluggable email service for invite notifications (mock mode for dev, ready for SendGrid/Resend integration)
 - **Analytics Dashboard**: Track article views, search queries, and feedback
 - **Settings**: Configure site title, primary color, upload logos
 - **Articles**: Create, edit, delete, and toggle visibility with quick publish/unpublish
@@ -30,6 +31,7 @@ Preferred communication style: Simple, everyday language.
 - Team collaboration uses single-KB model (one KB per owner, members invited to that KB)
 - Categories only display on public site when containing at least one public article (intentional UX)
 - Article versioning: Revisions auto-increment version number on each save; restore creates new revision before reverting
+- Email service: Abstraction in `server/email.ts` with MockEmailProvider for dev; swap to SendGridProvider/ResendProvider when ready (just uncomment and add API key)
 
 ## System Architecture
 
