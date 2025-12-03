@@ -14,9 +14,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Label } from "@/components/ui/label";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { Bold, Italic, List, ListOrdered, Heading1, Heading2, Undo, Redo, History, RotateCcw } from "lucide-react";
+import Image from "@tiptap/extension-image";
+import { Bold, Italic, List, ListOrdered, Heading1, Heading2, Undo, Redo, History, RotateCcw, ImageIcon, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import type { Article, Category, ArticleRevision } from "@shared/schema";
 import { insertArticleSchema } from "@shared/schema";
@@ -38,6 +40,9 @@ export default function ArticleEditor() {
   const contentFieldOnChangeRef = useRef<((value: string) => void) | null>(null);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [selectedRevision, setSelectedRevision] = useState<ArticleRevision | null>(null);
+  const [imageDialogOpen, setImageDialogOpen] = useState(false);
+  const [imageUploading, setImageUploading] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const form = useForm<ArticleFormValues>({
     resolver: zodResolver(articleFormSchema),
@@ -98,7 +103,14 @@ export default function ArticleEditor() {
   });
 
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: [
+      StarterKit,
+      Image.configure({
+        HTMLAttributes: {
+          class: "max-w-full h-auto rounded-lg",
+        },
+      }),
+    ],
     content: "",
     editorProps: {
       attributes: {
@@ -113,6 +125,67 @@ export default function ArticleEditor() {
       }
     },
   });
+
+  const handleImageUpload = async (file: File) => {
+    if (file.size > 10 * 1024 * 1024) {
+      toast({
+        title: "Error",
+        description: "Image must be less than 10MB",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setImageUploading(true);
+    try {
+      const uploadUrlResponse = await fetch("/api/objects/upload", {
+        method: "POST",
+        credentials: "include",
+      });
+      const { uploadURL } = await uploadUrlResponse.json();
+
+      await fetch(uploadURL, {
+        method: "PUT",
+        body: file,
+        headers: {
+          "Content-Type": file.type,
+        },
+      });
+
+      const imageResponse = await apiRequest("PUT", "/api/article-images", {
+        imageURL: uploadURL,
+      });
+      const { objectPath } = await imageResponse.json();
+
+      if (editor) {
+        editor.chain().focus().setImage({ src: objectPath }).run();
+      }
+
+      setImageDialogOpen(false);
+      toast({
+        title: "Success",
+        description: "Image inserted successfully",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to upload image",
+        variant: "destructive",
+      });
+    } finally {
+      setImageUploading(false);
+      if (imageInputRef.current) {
+        imageInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleImageUpload(file);
+    }
+  };
 
   useEffect(() => {
     if (article && editor) {
@@ -293,6 +366,16 @@ export default function ArticleEditor() {
                 >
                   <Redo className="w-4 h-4" />
                 </Button>
+                <div className="w-px h-6 bg-border mx-1" />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setImageDialogOpen(true)}
+                  data-testid="button-insert-image"
+                >
+                  <ImageIcon className="w-4 h-4" />
+                </Button>
               </div>
             </Card>
 
@@ -444,6 +527,61 @@ export default function ArticleEditor() {
           </div>
         </div>
       </div>
+
+      <Dialog open={imageDialogOpen} onOpenChange={setImageDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Insert Image</DialogTitle>
+            <DialogDescription>
+              Upload an image to insert into your article. Maximum file size is 10MB.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="border-2 border-dashed rounded-lg p-8 text-center">
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageFileChange}
+                className="hidden"
+                data-testid="input-image-file"
+              />
+              {imageUploading ? (
+                <div className="flex flex-col items-center gap-2">
+                  <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">Uploading image...</p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-2">
+                  <ImageIcon className="w-8 h-8 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">
+                    Click to select an image or drag and drop
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => imageInputRef.current?.click()}
+                    data-testid="button-select-image"
+                  >
+                    Select Image
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setImageDialogOpen(false)}
+              disabled={imageUploading}
+              data-testid="button-cancel-image"
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={restoreDialogOpen} onOpenChange={setRestoreDialogOpen}>
         <DialogContent>

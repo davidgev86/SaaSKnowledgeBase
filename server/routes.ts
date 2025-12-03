@@ -580,6 +580,20 @@ export function registerRoutes(app: Express) {
     }
   });
 
+  app.put("/api/article-images", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const { imageURL } = req.body;
+      const objectPath = await objectStorageService.trySetObjectEntityAclPolicy(imageURL, {
+        owner: userId,
+        visibility: "public",
+      });
+      res.json({ objectPath });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
   app.get("/objects/*", async (req, res) => {
     try {
       const userId = getUserId(req);
