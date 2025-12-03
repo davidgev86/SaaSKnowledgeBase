@@ -32,6 +32,7 @@ Preferred communication style: Simple, everyday language.
 - Categories only display on public site when containing at least one public article (intentional UX)
 - Article versioning: Revisions auto-increment version number on each save; restore creates new revision before reverting
 - Email service: Abstraction in `server/email.ts` with MockEmailProvider for dev; swap to SendGridProvider/ResendProvider when ready (just uncomment and add API key)
+- Article images: Uploaded via `/api/article-images` endpoint using object storage; images stored with public ACL and inserted into TipTap editor; max size 10MB
 
 ## System Architecture
 
@@ -47,7 +48,7 @@ Preferred communication style: Simple, everyday language.
 
 **State Management**: TanStack Query (React Query) for server state management with custom query client configuration. Form state is managed with React Hook Form and Zod for validation.
 
-**Rich Text Editing**: TipTap editor with StarterKit for article content creation, providing a WYSIWYG editing experience.
+**Rich Text Editing**: TipTap editor with StarterKit and Image extension for article content creation, providing a WYSIWYG editing experience with inline image support.
 
 **File Uploads**: Uppy integration for handling file uploads to cloud storage.
 
