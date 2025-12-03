@@ -178,6 +178,15 @@ export class DatabaseStorage implements IStorage {
     await db.delete(categories).where(eq(categories.id, id));
   }
 
+  async reorderCategories(categoryOrders: { id: string; order: number }[], knowledgeBaseId: string): Promise<void> {
+    for (const { id, order } of categoryOrders) {
+      await db
+        .update(categories)
+        .set({ order, updatedAt: new Date() })
+        .where(and(eq(categories.id, id), eq(categories.knowledgeBaseId, knowledgeBaseId)));
+    }
+  }
+
   async trackArticleView(viewData: InsertAnalyticsView): Promise<void> {
     await db.insert(analyticsViews).values(viewData);
   }

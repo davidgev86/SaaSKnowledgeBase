@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -12,16 +12,109 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/EmptyState";
-import { Plus, FolderOpen, Edit, Trash2 } from "lucide-react";
+import { Plus, FolderOpen, Edit, Trash2, GripVertical } from "lucide-react";
 import type { Category } from "@shared/schema";
 import { insertCategorySchema } from "@shared/schema";
 import { z } from "zod";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 const categoryFormSchema = insertCategorySchema.extend({
   name: z.string().min(1, "Category name is required"),
 }).omit({ knowledgeBaseId: true, order: true });
 
 type CategoryFormValues = z.infer<typeof categoryFormSchema>;
+
+interface SortableCategoryCardProps {
+  category: Category;
+  onEdit: (category: Category) => void;
+  onDelete: (id: string) => void;
+  isDeleting: boolean;
+}
+
+function SortableCategoryCard({ category, onEdit, onDelete, isDeleting }: SortableCategoryCardProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: category.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 1000 : 1,
+  };
+
+  return (
+    <Card
+      ref={setNodeRef}
+      style={style}
+      className="p-4 flex items-center gap-4"
+      data-testid={`category-card-${category.id}`}
+    >
+      <div
+        {...attributes}
+        {...listeners}
+        className="cursor-grab active:cursor-grabbing p-1 hover-elevate rounded"
+        data-testid={`drag-handle-${category.id}`}
+      >
+        <GripVertical className="w-5 h-5 text-muted-foreground" />
+      </div>
+      
+      <FolderOpen className="w-6 h-6 text-primary flex-shrink-0" />
+      
+      <div className="flex-1 min-w-0">
+        <h3 className="font-semibold truncate" data-testid={`text-category-name-${category.id}`}>
+          {category.name}
+        </h3>
+        {category.description && (
+          <p className="text-sm text-muted-foreground truncate" data-testid={`text-category-desc-${category.id}`}>
+            {category.description}
+          </p>
+        )}
+      </div>
+      
+      <div className="flex gap-1 flex-shrink-0">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => onEdit(category)}
+          data-testid={`button-edit-category-${category.id}`}
+        >
+          <Edit className="w-4 h-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => onDelete(category.id)}
+          disabled={isDeleting}
+          data-testid={`button-delete-category-${category.id}`}
+        >
+          <Trash2 className="w-4 h-4" />
+        </Button>
+      </div>
+    </Card>
+  );
+}
 
 export default function Categories() {
   const { toast } = useToast();
@@ -35,6 +128,17 @@ export default function Categories() {
       description: "",
     },
   });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   const { data: categories, isLoading } = useQuery<Category[]>({
     queryKey: ["/api/categories"],
@@ -73,6 +177,34 @@ export default function Categories() {
         description: `Failed to ${editingCategory ? "update" : "create"} category`,
         variant: "destructive",
       });
+    },
+  });
+
+  const reorderMutation = useMutation({
+    mutationFn: async (categoryOrders: { id: string; order: number }[]) => {
+      await apiRequest("PUT", "/api/categories/reorder", { categoryOrders });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Error",
+        description: "Failed to reorder categories",
+        variant: "destructive",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
     },
   });
 
@@ -134,6 +266,26 @@ export default function Categories() {
     setIsDialogOpen(true);
   };
 
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id && categories) {
+      const oldIndex = categories.findIndex((c) => c.id === active.id);
+      const newIndex = categories.findIndex((c) => c.id === over.id);
+
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const reordered = arrayMove(categories, oldIndex, newIndex);
+        const categoryOrders = reordered.map((cat, index) => ({
+          id: cat.id,
+          order: index,
+        }));
+
+        queryClient.setQueryData(["/api/categories"], reordered);
+        reorderMutation.mutate(categoryOrders);
+      }
+    }
+  };
+
   if (isLoading) {
     return <div className="p-8 max-w-5xl mx-auto">Loading...</div>;
   }
@@ -143,7 +295,9 @@ export default function Categories() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-bold mb-2">Categories</h1>
-          <p className="text-muted-foreground">Organize your articles into categories</p>
+          <p className="text-muted-foreground">
+            Organize your articles into categories. Drag to reorder.
+          </p>
         </div>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
@@ -223,38 +377,34 @@ export default function Categories() {
           onAction={openCreateDialog}
         />
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {categories.map((category) => (
-            <Card key={category.id} className="p-6" data-testid={`category-card-${category.id}`}>
-              <div className="flex items-start justify-between mb-3">
-                <FolderOpen className="w-8 h-8 text-primary" />
-                <div className="flex gap-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => openEditDialog(category)}
-                    data-testid={`button-edit-category-${category.id}`}
-                  >
-                    <Edit className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => deleteMutation.mutate(category.id)}
-                    disabled={deleteMutation.isPending}
-                    data-testid={`button-delete-category-${category.id}`}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-              <h3 className="font-semibold text-lg mb-2" data-testid={`text-category-name-${category.id}`}>{category.name}</h3>
-              {category.description && (
-                <p className="text-sm text-muted-foreground line-clamp-2" data-testid={`text-category-desc-${category.id}`}>{category.description}</p>
-              )}
-            </Card>
-          ))}
-        </div>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={categories.map((c) => c.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <div className="space-y-3" data-testid="categories-list">
+              {categories.map((category) => (
+                <SortableCategoryCard
+                  key={category.id}
+                  category={category}
+                  onEdit={openEditDialog}
+                  onDelete={(id) => deleteMutation.mutate(id)}
+                  isDeleting={deleteMutation.isPending}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      )}
+
+      {categories && categories.length > 0 && (
+        <p className="text-sm text-muted-foreground mt-6 text-center">
+          The order shown here is how categories will appear on your public knowledge base.
+        </p>
       )}
     </div>
   );

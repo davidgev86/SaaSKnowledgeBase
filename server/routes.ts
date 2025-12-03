@@ -363,6 +363,40 @@ export function registerRoutes(app: Express) {
     }
   });
 
+  app.put("/api/categories/reorder", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kb = await storage.getKnowledgeBaseForUser(userId);
+      if (!kb) {
+        return res.status(400).json({ message: "Knowledge base not found" });
+      }
+
+      const canEdit = await checkUserCanEdit(userId, kb.id);
+      if (!canEdit) {
+        return res.status(403).json({ message: "You don't have permission to reorder categories" });
+      }
+
+      const { categoryOrders } = req.body as { categoryOrders: { id: string; order: number }[] };
+      if (!categoryOrders || !Array.isArray(categoryOrders)) {
+        return res.status(400).json({ message: "categoryOrders array is required" });
+      }
+
+      const existingCategories = await storage.getCategoriesByKnowledgeBaseId(kb.id);
+      const validCategoryIds = new Set(existingCategories.map(c => c.id));
+      
+      for (const { id } of categoryOrders) {
+        if (!validCategoryIds.has(id)) {
+          return res.status(403).json({ message: "Invalid category ID - category does not belong to your knowledge base" });
+        }
+      }
+
+      await storage.reorderCategories(categoryOrders, kb.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/analytics/views", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
