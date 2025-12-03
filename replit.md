@@ -27,9 +27,11 @@ Preferred communication style: Simple, everyday language.
 
 ### Technical Notes
 - Object serving route must construct paths as `/objects/${param}` not `/${param}`
-- Search queries use Drizzle's `ilike()` function, not raw SQL template literals
+- **Full-text search**: Uses PostgreSQL `websearch_to_tsquery()` for relevance-ranked results with fallback to ILIKE for robustness
+- **Search indexes**: GIN index on `to_tsvector('english', title || content)` for performance; B-tree indexes on title and (knowledge_base_id, is_public)
 - Team collaboration uses single-KB model (one KB per owner, members invited to that KB)
 - Categories only display on public site when containing at least one public article (intentional UX)
+- **Category reordering**: Uses @dnd-kit for drag-and-drop; order field in categories table; PUT /api/categories/reorder endpoint
 - Article versioning: Revisions auto-increment version number on each save; restore creates new revision before reverting
 - Email service: Abstraction in `server/email.ts` with MockEmailProvider for dev; swap to SendGridProvider/ResendProvider when ready (just uncomment and add API key)
 - Article images: Uploaded via `/api/article-images` endpoint using object storage; images stored with public ACL and inserted into TipTap editor; max size 10MB
