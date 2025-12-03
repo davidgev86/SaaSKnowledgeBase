@@ -8,17 +8,18 @@ A full-stack SaaS application for creating and managing knowledge bases with pub
 
 Preferred communication style: Simple, everyday language.
 
-## Recent Updates (November 2025)
+## Recent Updates (December 2025)
 
 ### Completed MVP Features
 - **Team Collaboration**: Invite team members, assign roles (owner/admin/contributor/viewer), manage permissions
 - **Email Notifications Framework**: Pluggable email service for invite notifications (mock mode for dev, ready for SendGrid/Resend integration)
-- **Analytics Dashboard**: Track article views, search queries, and feedback
+- **Analytics Dashboard**: Track article views, search queries, and feedback with interactive charts and date range filtering
 - **Settings**: Configure site title, primary color, upload logos
 - **Articles**: Create, edit, delete, and toggle visibility with quick publish/unpublish
 - **Categories**: Organize articles into categories
 - **Public Help Center**: Searchable public-facing documentation site
 - **Article Versioning**: Automatic version history on article saves, view revisions in sidebar, restore to previous versions
+- **Dark Mode**: Full dark mode support with theme toggle on all pages (Light/Dark/System preference)
 
 ### Bug Fixes Applied
 - Logo upload: Fixed JSON response parsing and object path construction (`/objects/${param}`)
@@ -35,6 +36,7 @@ Preferred communication style: Simple, everyday language.
 - Article versioning: Revisions auto-increment version number on each save; restore creates new revision before reverting
 - Email service: Abstraction in `server/email.ts` with MockEmailProvider for dev; swap to SendGridProvider/ResendProvider when ready (just uncomment and add API key)
 - Article images: Uploaded via `/api/article-images` endpoint using object storage; images stored with public ACL and inserted into TipTap editor; max size 10MB
+- **Dark mode**: ThemeProvider in `client/src/components/ThemeProvider.tsx` manages theme state with localStorage persistence; CSS variables in `index.css` define light/dark color schemes; Tailwind's `darkMode: ["class"]` enables class-based toggling
 
 ## System Architecture
 
