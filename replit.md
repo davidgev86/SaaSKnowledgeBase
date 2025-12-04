@@ -46,6 +46,38 @@ Preferred communication style: Simple, everyday language.
 - Article images: Uploaded via `/api/article-images` endpoint using object storage; images stored with public ACL and inserted into TipTap editor; max size 10MB
 - **Dark mode**: ThemeProvider in `client/src/components/ThemeProvider.tsx` manages theme state with localStorage persistence; CSS variables in `index.css` define light/dark color schemes; Tailwind's `darkMode: ["class"]` enables class-based toggling
 
+## Testing Infrastructure
+
+### End-to-End Tests (Playwright)
+Located in `tests/e2e/`:
+- `auth.spec.ts` - Authentication flow (login, logout, navigation)
+- `articles.spec.ts` - Article CRUD operations and visibility toggle
+- `categories.spec.ts` - Category management and drag-and-drop reordering
+- `team.spec.ts` - Team invitation and role management
+- `analytics.spec.ts` - Analytics dashboard and date filtering
+- `settings.spec.ts` - KB settings configuration
+- `public-search.spec.ts` - Public knowledge base and search
+- `article-versioning.spec.ts` - Version history and restore
+
+### Integration Tests (Vitest)
+Located in `tests/integration/`:
+- `permissions.test.ts` - Permission system, role hierarchy, KB access control, revision system
+
+### Running Tests
+```bash
+# Run integration tests
+npx vitest run tests/integration
+
+# Run E2E tests (requires app running)
+npx playwright test
+
+# Run specific E2E test
+npx playwright test tests/e2e/articles.spec.ts
+```
+
+### Test Helpers
+- `tests/e2e/utils/test-helpers.ts` - Common utilities (waitForKBReady, generateUniqueId, etc.)
+
 ## System Architecture
 
 ### Frontend Architecture
