@@ -37,10 +37,11 @@ export const users = pgTable("users", {
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
 
-// Knowledge Base table - Each user can have one knowledge base
+// Knowledge Base table - Users can have multiple knowledge bases
 export const knowledgeBases = pgTable("knowledge_bases", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  slug: varchar("slug").notNull().unique(),
   siteTitle: varchar("site_title").notNull().default("Knowledge Base"),
   logoUrl: varchar("logo_url"),
   primaryColor: varchar("primary_color").default("#3B82F6"),

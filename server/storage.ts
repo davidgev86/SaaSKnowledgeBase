@@ -35,8 +35,12 @@ export interface IStorage {
   getKnowledgeBasesByUserId(userId: string): Promise<KnowledgeBase[]>;
   getKnowledgeBaseByUserId(userId: string): Promise<KnowledgeBase | undefined>;
   getKnowledgeBaseById(id: string): Promise<KnowledgeBase | undefined>;
+  getKnowledgeBaseBySlug(slug: string): Promise<KnowledgeBase | undefined>;
+  getAccessibleKnowledgeBases(userId: string): Promise<Array<KnowledgeBase & { role: string }>>;
+  hasAccessToKnowledgeBase(userId: string, kbId: string): Promise<boolean>;
   createKnowledgeBase(kb: InsertKnowledgeBase): Promise<KnowledgeBase>;
   updateKnowledgeBase(id: string, kb: Partial<InsertKnowledgeBase>): Promise<KnowledgeBase>;
+  generateUniqueSlug(title: string): Promise<string>;
 
   getArticlesByKnowledgeBaseId(kbId: string): Promise<Article[]>;
   getArticleById(id: string): Promise<Article | undefined>;
@@ -108,6 +112,79 @@ export class DatabaseStorage implements IStorage {
   async getKnowledgeBaseById(id: string): Promise<KnowledgeBase | undefined> {
     const [kb] = await db.select().from(knowledgeBases).where(eq(knowledgeBases.id, id)).limit(1);
     return kb;
+  }
+
+  async getKnowledgeBaseBySlug(slug: string): Promise<KnowledgeBase | undefined> {
+    const [kb] = await db.select().from(knowledgeBases).where(eq(knowledgeBases.slug, slug)).limit(1);
+    return kb;
+  }
+
+  async getAccessibleKnowledgeBases(userId: string): Promise<Array<KnowledgeBase & { role: string }>> {
+    const ownedKbs = await db
+      .select()
+      .from(knowledgeBases)
+      .where(eq(knowledgeBases.userId, userId));
+    
+    const ownedWithRole = ownedKbs.map(kb => ({ ...kb, role: 'owner' }));
+
+    const memberKbs = await db
+      .select({
+        id: knowledgeBases.id,
+        userId: knowledgeBases.userId,
+        slug: knowledgeBases.slug,
+        siteTitle: knowledgeBases.siteTitle,
+        logoUrl: knowledgeBases.logoUrl,
+        primaryColor: knowledgeBases.primaryColor,
+        customDomain: knowledgeBases.customDomain,
+        createdAt: knowledgeBases.createdAt,
+        updatedAt: knowledgeBases.updatedAt,
+        role: teamMembers.role,
+      })
+      .from(teamMembers)
+      .innerJoin(knowledgeBases, eq(teamMembers.knowledgeBaseId, knowledgeBases.id))
+      .where(and(eq(teamMembers.userId, userId), eq(teamMembers.status, 'active')));
+
+    const allKbs = [...ownedWithRole, ...memberKbs];
+    const uniqueKbs = allKbs.reduce((acc, kb) => {
+      if (!acc.find(k => k.id === kb.id)) {
+        acc.push(kb);
+      }
+      return acc;
+    }, [] as Array<KnowledgeBase & { role: string }>);
+
+    return uniqueKbs;
+  }
+
+  async hasAccessToKnowledgeBase(userId: string, kbId: string): Promise<boolean> {
+    const kb = await this.getKnowledgeBaseById(kbId);
+    if (!kb) return false;
+    
+    if (kb.userId === userId) return true;
+    
+    const role = await this.getUserRole(userId, kbId);
+    return !!role;
+  }
+
+  async generateUniqueSlug(title: string): Promise<string> {
+    const baseSlug = title
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .trim()
+      .substring(0, 50) || 'kb';
+
+    let slug = baseSlug;
+    let counter = 1;
+    
+    while (true) {
+      const existing = await this.getKnowledgeBaseBySlug(slug);
+      if (!existing) break;
+      slug = `${baseSlug}-${counter}`;
+      counter++;
+    }
+    
+    return slug;
   }
 
   async createKnowledgeBase(kbData: InsertKnowledgeBase): Promise<KnowledgeBase> {
