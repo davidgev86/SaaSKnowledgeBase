@@ -50,7 +50,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/knowledge-bases", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kbs = await storage.getKnowledgeBasesByUserId(userId);
+      const kbs = await storage.getAccessibleKnowledgeBases(userId);
       res.json(kbs);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -60,11 +60,17 @@ export function registerRoutes(app: Express) {
   app.post("/api/knowledge-bases", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const validatedData = insertKnowledgeBaseSchema.omit({ id: true, createdAt: true, updatedAt: true }).parse({
-        ...req.body,
+      const siteTitle = req.body.siteTitle || "Knowledge Base";
+      const slug = await storage.generateUniqueSlug(siteTitle);
+      
+      const kb = await storage.createKnowledgeBase({
         userId,
+        slug,
+        siteTitle,
+        logoUrl: req.body.logoUrl || null,
+        primaryColor: req.body.primaryColor || "#3B82F6",
+        customDomain: req.body.customDomain || null,
       });
-      const kb = await storage.createKnowledgeBase(validatedData);
       res.json(kb);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -85,10 +91,22 @@ export function registerRoutes(app: Express) {
     }
   });
 
+  async function getSelectedKnowledgeBase(userId: string, kbId?: string) {
+    if (kbId) {
+      const kb = await storage.getKnowledgeBaseById(kbId);
+      if (kb && await storage.hasAccessToKnowledgeBase(userId, kbId)) {
+        return kb;
+      }
+      return undefined;
+    }
+    return storage.getKnowledgeBaseForUser(userId);
+  }
+
   app.get("/api/articles", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseForUser(userId);
+      const kbId = req.query.kbId as string | undefined;
+      const kb = await getSelectedKnowledgeBase(userId, kbId);
       if (!kb) {
         return res.json([]);
       }
@@ -121,7 +139,8 @@ export function registerRoutes(app: Express) {
   app.post("/api/articles", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseForUser(userId);
+      const kbId = (req.query.kbId as string) || req.body.knowledgeBaseId;
+      const kb = await getSelectedKnowledgeBase(userId, kbId);
       if (!kb) {
         return res.status(400).json({ message: "Knowledge base not found. Create one first." });
       }
@@ -131,11 +150,13 @@ export function registerRoutes(app: Express) {
         return res.status(403).json({ message: "You don't have permission to create articles" });
       }
 
-      const validatedData = insertArticleSchema.omit({ id: true, createdAt: true, updatedAt: true }).parse({
-        ...req.body,
+      const article = await storage.createArticle({
         knowledgeBaseId: kb.id,
+        title: req.body.title,
+        content: req.body.content,
+        categoryId: req.body.categoryId || null,
+        isPublic: req.body.isPublic ?? false,
       });
-      const article = await storage.createArticle(validatedData);
       res.json(article);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -287,7 +308,8 @@ export function registerRoutes(app: Express) {
   app.get("/api/categories", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseForUser(userId);
+      const kbId = req.query.kbId as string | undefined;
+      const kb = await getSelectedKnowledgeBase(userId, kbId);
       if (!kb) {
         return res.json([]);
       }
@@ -301,7 +323,8 @@ export function registerRoutes(app: Express) {
   app.post("/api/categories", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseForUser(userId);
+      const kbId = (req.query.kbId as string) || req.body.knowledgeBaseId;
+      const kb = await getSelectedKnowledgeBase(userId, kbId);
       if (!kb) {
         return res.status(400).json({ message: "Knowledge base not found. Create one first." });
       }
@@ -311,12 +334,12 @@ export function registerRoutes(app: Express) {
         return res.status(403).json({ message: "You don't have permission to create categories" });
       }
 
-      const validatedData = insertCategorySchema.omit({ id: true, createdAt: true, updatedAt: true }).parse({
-        ...req.body,
+      const category = await storage.createCategory({
         knowledgeBaseId: kb.id,
-        order: 0,
+        name: req.body.name,
+        description: req.body.description || null,
+        order: req.body.order ?? 0,
       });
-      const category = await storage.createCategory(validatedData);
       res.json(category);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -326,7 +349,8 @@ export function registerRoutes(app: Express) {
   app.put("/api/categories/reorder", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseForUser(userId);
+      const kbId = req.query.kbId as string | undefined;
+      const kb = await getSelectedKnowledgeBase(userId, kbId);
       if (!kb) {
         return res.status(400).json({ message: "Knowledge base not found" });
       }
@@ -400,7 +424,8 @@ export function registerRoutes(app: Express) {
   app.get("/api/analytics/views", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseForUser(userId);
+      const kbId = req.query.kbId as string | undefined;
+      const kb = await getSelectedKnowledgeBase(userId, kbId);
       if (!kb) {
         return res.json({ totalViews: 0, recentViews: [], viewsByDate: [] });
       }
@@ -423,7 +448,8 @@ export function registerRoutes(app: Express) {
   app.get("/api/analytics/searches", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseForUser(userId);
+      const kbId = req.query.kbId as string | undefined;
+      const kb = await getSelectedKnowledgeBase(userId, kbId);
       if (!kb) {
         return res.json({ totalSearches: 0, recentSearches: [] });
       }
@@ -446,7 +472,8 @@ export function registerRoutes(app: Express) {
   app.get("/api/analytics/export", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseForUser(userId);
+      const kbId = req.query.kbId as string | undefined;
+      const kb = await getSelectedKnowledgeBase(userId, kbId);
       if (!kb) {
         return res.status(404).json({ message: "Knowledge base not found" });
       }
@@ -484,9 +511,17 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.get("/api/kb/:userId", async (req, res) => {
+  async function getKnowledgeBaseByIdentifier(identifier: string): Promise<typeof import("@shared/schema").knowledgeBases.$inferSelect | undefined> {
+    let kb = await storage.getKnowledgeBaseBySlug(identifier);
+    if (!kb) {
+      kb = await storage.getKnowledgeBaseByUserId(identifier);
+    }
+    return kb;
+  }
+
+  app.get("/api/kb/:identifier", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBaseByUserId(req.params.userId);
+      const kb = await getKnowledgeBaseByIdentifier(req.params.identifier);
       if (!kb) {
         return res.status(404).json({ message: "Knowledge base not found" });
       }
@@ -496,9 +531,9 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.get("/api/kb/:userId/articles", async (req, res) => {
+  app.get("/api/kb/:identifier/articles", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBaseByUserId(req.params.userId);
+      const kb = await getKnowledgeBaseByIdentifier(req.params.identifier);
       if (!kb) {
         return res.json([]);
       }
@@ -510,7 +545,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.get("/api/kb/:userId/articles/:articleId", async (req, res) => {
+  app.get("/api/kb/:identifier/articles/:articleId", async (req, res) => {
     try {
       const article = await storage.getArticleById(req.params.articleId);
       if (!article || !article.isPublic) {
@@ -522,9 +557,9 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.get("/api/kb/:userId/categories", async (req, res) => {
+  app.get("/api/kb/:identifier/categories", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBaseByUserId(req.params.userId);
+      const kb = await getKnowledgeBaseByIdentifier(req.params.identifier);
       if (!kb) {
         return res.json([]);
       }
@@ -535,14 +570,14 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.get("/api/kb/:userId/search", async (req, res) => {
+  app.get("/api/kb/:identifier/search", async (req, res) => {
     try {
       const query = req.query.q as string;
       if (!query) {
         return res.json([]);
       }
 
-      const kb = await storage.getKnowledgeBaseByUserId(req.params.userId);
+      const kb = await getKnowledgeBaseByIdentifier(req.params.identifier);
       if (!kb) {
         return res.json([]);
       }
@@ -554,14 +589,14 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.get("/api/kb/:userId/search/:query", async (req, res) => {
+  app.get("/api/kb/:identifier/search/:query", async (req, res) => {
     try {
       const query = req.params.query;
       if (!query) {
         return res.json([]);
       }
 
-      const kb = await storage.getKnowledgeBaseByUserId(req.params.userId);
+      const kb = await getKnowledgeBaseByIdentifier(req.params.identifier);
       if (!kb) {
         return res.json([]);
       }
@@ -573,10 +608,10 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.post("/api/kb/:userId/search", async (req, res) => {
+  app.post("/api/kb/:identifier/search", async (req, res) => {
     try {
       const { query } = req.body;
-      const kb = await storage.getKnowledgeBaseByUserId(req.params.userId);
+      const kb = await getKnowledgeBaseByIdentifier(req.params.identifier);
       if (!kb) {
         return res.status(404).json({ message: "Knowledge base not found" });
       }
@@ -665,7 +700,8 @@ export function registerRoutes(app: Express) {
   app.get("/api/team/members", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      const kb = await storage.getKnowledgeBaseForUser(userId);
+      const kbId = req.query.kbId as string | undefined;
+      const kb = await getSelectedKnowledgeBase(userId, kbId);
       if (!kb) {
         return res.json([]);
       }
@@ -680,7 +716,8 @@ export function registerRoutes(app: Express) {
     try {
       const userId = getUserId(req);
       const validatedData = inviteSchema.parse(req.body);
-      const kb = await storage.getKnowledgeBaseForUser(userId);
+      const kbId = (req.query.kbId as string) || req.body.knowledgeBaseId;
+      const kb = await getSelectedKnowledgeBase(userId, kbId);
       if (!kb) {
         return res.status(404).json({ message: "Knowledge base not found" });
       }
