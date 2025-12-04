@@ -1,5 +1,7 @@
 # Knowledge Base SaaS Platform
 
+> **New to the project?** See [SETUP.md](./SETUP.md) for complete local development and deployment instructions.
+
 ## Overview
 
 A full-stack SaaS application for creating and managing knowledge bases with public help centers. Users can create articles with a rich text editor, organize content into categories, track analytics, and publish customizable public-facing help centers. The platform features a dual interface: an authenticated admin dashboard for content management and public-facing pages for end-users to browse and search documentation.
