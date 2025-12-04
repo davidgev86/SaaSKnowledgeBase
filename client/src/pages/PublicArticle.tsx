@@ -9,15 +9,15 @@ import type { Article, KnowledgeBase } from "@shared/schema";
 
 export default function PublicArticle() {
   const params = useParams();
-  const userId = params.userId;
+  const identifier = params.identifier;
   const articleId = params.articleId;
 
   const { data: kb } = useQuery<KnowledgeBase>({
-    queryKey: [`/api/kb/${userId}`],
+    queryKey: [`/api/kb/${identifier}`],
   });
 
   const { data: article } = useQuery<Article>({
-    queryKey: [`/api/kb/${userId}/articles/${articleId}`],
+    queryKey: [`/api/kb/${identifier}/articles/${articleId}`],
   });
 
   useEffect(() => {
@@ -53,7 +53,7 @@ export default function PublicArticle() {
       <header className="border-b bg-card sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            <Link href={`/kb/${userId}`}>
+            <Link href={`/kb/${identifier}`}>
               <Button variant="ghost" size="sm" data-testid="button-back">
                 <ChevronLeft className="w-4 h-4 mr-2" />
                 Back

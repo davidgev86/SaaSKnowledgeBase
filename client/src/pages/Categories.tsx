@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/EmptyState";
 import { Plus, FolderOpen, Edit, Trash2, GripVertical } from "lucide-react";
+import { useKnowledgeBase } from "@/context/KnowledgeBaseContext";
 import type { Category } from "@shared/schema";
 import { insertCategorySchema } from "@shared/schema";
 import { z } from "zod";
@@ -120,6 +121,7 @@ export default function Categories() {
   const { toast } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const { selectedKnowledgeBase, getApiUrl, isLoading: isKbLoading, isReady } = useKnowledgeBase();
 
   const form = useForm<CategoryFormValues>({
     resolver: zodResolver(categoryFormSchema),
@@ -141,19 +143,25 @@ export default function Categories() {
   );
 
   const { data: categories, isLoading } = useQuery<Category[]>({
-    queryKey: ["/api/categories"],
+    queryKey: ["/api/categories", selectedKnowledgeBase?.id],
+    queryFn: async () => {
+      const res = await fetch(getApiUrl("/api/categories"), { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch categories");
+      return res.json();
+    },
+    enabled: !!selectedKnowledgeBase,
   });
 
   const saveMutation = useMutation({
     mutationFn: async (data: CategoryFormValues) => {
       if (editingCategory) {
-        await apiRequest("PUT", `/api/categories/${editingCategory.id}`, data);
+        await apiRequest("PUT", getApiUrl(`/api/categories/${editingCategory.id}`), data);
       } else {
-        await apiRequest("POST", "/api/categories", data);
+        await apiRequest("POST", getApiUrl("/api/categories"), data);
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/categories", selectedKnowledgeBase?.id] });
       toast({
         title: "Success",
         description: `Category ${editingCategory ? "updated" : "created"} successfully`,
@@ -182,10 +190,10 @@ export default function Categories() {
 
   const reorderMutation = useMutation({
     mutationFn: async (categoryOrders: { id: string; order: number }[]) => {
-      await apiRequest("PUT", "/api/categories/reorder", { categoryOrders });
+      await apiRequest("PUT", getApiUrl("/api/categories/reorder"), { categoryOrders });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/categories", selectedKnowledgeBase?.id] });
     },
     onError: (error: Error) => {
       if (isUnauthorizedError(error)) {
@@ -204,7 +212,7 @@ export default function Categories() {
         description: "Failed to reorder categories",
         variant: "destructive",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/categories", selectedKnowledgeBase?.id] });
     },
   });
 
@@ -214,10 +222,10 @@ export default function Categories() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      await apiRequest("DELETE", `/api/categories/${id}`);
+      await apiRequest("DELETE", getApiUrl(`/api/categories/${id}`));
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/categories", selectedKnowledgeBase?.id] });
       toast({
         title: "Success",
         description: "Category deleted successfully",
@@ -280,13 +288,13 @@ export default function Categories() {
           order: index,
         }));
 
-        queryClient.setQueryData(["/api/categories"], reordered);
+        queryClient.setQueryData(["/api/categories", selectedKnowledgeBase?.id], reordered);
         reorderMutation.mutate(categoryOrders);
       }
     }
   };
 
-  if (isLoading) {
+  if (isLoading || isKbLoading || !isReady) {
     return <div className="p-8 max-w-5xl mx-auto">Loading...</div>;
   }
 

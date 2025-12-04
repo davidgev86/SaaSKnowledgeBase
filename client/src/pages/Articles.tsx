@@ -11,26 +11,40 @@ import { EmptyState } from "@/components/EmptyState";
 import { ArticleListSkeleton } from "@/components/LoadingSkeleton";
 import { Link } from "wouter";
 import { FileText, Plus, Search, Edit, Trash2, Eye, EyeOff } from "lucide-react";
+import { useKnowledgeBase } from "@/context/KnowledgeBaseContext";
 import type { Article, Category } from "@shared/schema";
 
 export default function Articles() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
+  const { selectedKnowledgeBase, getApiUrl, isLoading: isKbLoading, isReady } = useKnowledgeBase();
 
   const { data: articles, isLoading } = useQuery<Article[]>({
-    queryKey: ["/api/articles"],
+    queryKey: ["/api/articles", selectedKnowledgeBase?.id],
+    queryFn: async () => {
+      const res = await fetch(getApiUrl("/api/articles"), { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch articles");
+      return res.json();
+    },
+    enabled: !!selectedKnowledgeBase,
   });
 
   const { data: categories } = useQuery<Category[]>({
-    queryKey: ["/api/categories"],
+    queryKey: ["/api/categories", selectedKnowledgeBase?.id],
+    queryFn: async () => {
+      const res = await fetch(getApiUrl("/api/categories"), { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch categories");
+      return res.json();
+    },
+    enabled: !!selectedKnowledgeBase,
   });
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      await apiRequest("DELETE", `/api/articles/${id}`);
+      await apiRequest("DELETE", getApiUrl(`/api/articles/${id}`));
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/articles", selectedKnowledgeBase?.id] });
       toast({
         title: "Success",
         description: "Article deleted successfully",
@@ -58,10 +72,10 @@ export default function Articles() {
 
   const togglePublicMutation = useMutation({
     mutationFn: async ({ id, isPublic }: { id: string; isPublic: boolean }) => {
-      await apiRequest("PUT", `/api/articles/${id}`, { isPublic });
+      await apiRequest("PUT", getApiUrl(`/api/articles/${id}`), { isPublic });
     },
     onSuccess: (_, { isPublic }) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/articles", selectedKnowledgeBase?.id] });
       toast({
         title: "Success",
         description: `Article is now ${isPublic ? "public" : "private"}`,
@@ -96,7 +110,7 @@ export default function Articles() {
     return categories?.find((c) => c.id === categoryId)?.name || "Unknown";
   };
 
-  if (isLoading) {
+  if (isLoading || isKbLoading || !isReady) {
     return (
       <div className="p-8 max-w-7xl mx-auto">
         <ArticleListSkeleton />

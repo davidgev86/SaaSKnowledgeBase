@@ -20,6 +20,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { Bold, Italic, List, ListOrdered, Heading1, Heading2, Undo, Redo, History, RotateCcw, ImageIcon, Loader2 } from "lucide-react";
 import { format } from "date-fns";
+import { useKnowledgeBase } from "@/context/KnowledgeBaseContext";
 import type { Article, Category, ArticleRevision } from "@shared/schema";
 import { insertArticleSchema } from "@shared/schema";
 import { z } from "zod";
@@ -35,6 +36,7 @@ export default function ArticleEditor() {
   const params = useParams();
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { selectedKnowledgeBase, getApiUrl, isLoading: isKbLoading, isReady } = useKnowledgeBase();
   const articleId = params.id;
   const isEditing = articleId && articleId !== "new";
   const contentFieldOnChangeRef = useRef<((value: string) => void) | null>(null);
@@ -60,7 +62,13 @@ export default function ArticleEditor() {
   });
 
   const { data: categories } = useQuery<Category[]>({
-    queryKey: ["/api/categories"],
+    queryKey: ["/api/categories", selectedKnowledgeBase?.id],
+    queryFn: async () => {
+      const res = await fetch(getApiUrl("/api/categories"), { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch categories");
+      return res.json();
+    },
+    enabled: !!selectedKnowledgeBase,
   });
 
   const { data: revisions, isLoading: revisionsLoading } = useQuery<ArticleRevision[]>({
@@ -202,13 +210,13 @@ export default function ArticleEditor() {
   const saveMutation = useMutation({
     mutationFn: async (formData: ArticleFormValues) => {
       if (isEditing) {
-        await apiRequest("PUT", `/api/articles/${articleId}`, formData);
+        await apiRequest("PUT", getApiUrl(`/api/articles/${articleId}`), formData);
       } else {
-        await apiRequest("POST", "/api/articles", formData);
+        await apiRequest("POST", getApiUrl("/api/articles"), formData);
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/articles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/articles", selectedKnowledgeBase?.id] });
       toast({
         title: "Success",
         description: `Article ${isEditing ? "updated" : "created"} successfully`,
@@ -243,8 +251,15 @@ export default function ArticleEditor() {
     saveMutation.mutate(normalizedData);
   };
 
-  if (!editor) {
-    return null;
+  if (!editor || isKbLoading || !isReady) {
+    return (
+      <div className="p-8 flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
   }
 
   return (

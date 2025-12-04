@@ -11,13 +11,14 @@ Preferred communication style: Simple, everyday language.
 ## Recent Updates (December 2025)
 
 ### Completed MVP Features
-- **Team Collaboration**: Invite team members, assign roles (owner/admin/contributor/viewer), manage permissions
+- **Multi-Tenant Knowledge Bases**: Users can create and manage multiple knowledge bases from a single account with KB switcher in sidebar
+- **Team Collaboration**: Invite team members, assign roles (owner/admin/contributor/viewer), manage permissions per KB
 - **Email Notifications Framework**: Pluggable email service for invite notifications (mock mode for dev, ready for SendGrid/Resend integration)
 - **Analytics Dashboard**: Track article views, search queries, and feedback with interactive charts and date range filtering
-- **Settings**: Configure site title, primary color, upload logos
+- **Settings**: Configure site title, primary color, upload logos per KB
 - **Articles**: Create, edit, delete, and toggle visibility with quick publish/unpublish
 - **Categories**: Organize articles into categories
-- **Public Help Center**: Searchable public-facing documentation site
+- **Public Help Center**: Searchable public-facing documentation site with slug-based URLs (/kb/my-kb-slug)
 - **Article Versioning**: Automatic version history on article saves, view revisions in sidebar, restore to previous versions
 - **Dark Mode**: Full dark mode support with theme toggle on all pages (Light/Dark/System preference)
 
@@ -30,7 +31,14 @@ Preferred communication style: Simple, everyday language.
 - Object serving route must construct paths as `/objects/${param}` not `/${param}`
 - **Full-text search**: Uses PostgreSQL `websearch_to_tsquery()` for relevance-ranked results with fallback to ILIKE for robustness
 - **Search indexes**: GIN index on `to_tsvector('english', title || content)` for performance; B-tree indexes on title and (knowledge_base_id, is_public)
-- Team collaboration uses single-KB model (one KB per owner, members invited to that KB)
+- **Multi-KB Architecture**: 
+  - `KnowledgeBaseContext` (`client/src/context/KnowledgeBaseContext.tsx`) manages selected KB state with `getApiUrl()` helper
+  - All authenticated API routes use `kbId` query parameter for KB-scoping
+  - Backend routes validate user access via team membership table or ownership
+  - KB switcher in `AppSidebar` allows switching between accessible KBs
+  - Public routes use generic `:identifier` parameter supporting both slugs and legacy userId URLs
+  - Cache invalidation includes kbId in query keys for proper data isolation
+- Team collaboration invites members to specific KBs; each member has a role per KB
 - Categories only display on public site when containing at least one public article (intentional UX)
 - **Category reordering**: Uses @dnd-kit for drag-and-drop; order field in categories table; PUT /api/categories/reorder endpoint
 - Article versioning: Revisions auto-increment version number on each save; restore creates new revision before reverting
@@ -76,7 +84,7 @@ Preferred communication style: Simple, everyday language.
 
 **Schema Design**:
 - Users table for authentication and profile data
-- Knowledge bases table (one per user) for site configuration
+- Knowledge bases table (multiple per user) for site configuration with unique slugs
 - Articles table with rich content, category associations, and public/private visibility
 - Categories table for organizing articles
 - Analytics tables for tracking views, searches, and article feedback

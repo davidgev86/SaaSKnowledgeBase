@@ -10,24 +10,24 @@ import type { KnowledgeBase, Article, Category } from "@shared/schema";
 
 export default function PublicKnowledgeBase() {
   const params = useParams();
-  const userId = params.userId;
+  const identifier = params.identifier;
   const [searchQuery, setSearchQuery] = useState("");
 
   const { data: kb } = useQuery<KnowledgeBase>({
-    queryKey: [`/api/kb/${userId}`],
+    queryKey: [`/api/kb/${identifier}`],
   });
 
   const { data: articles } = useQuery<Article[]>({
-    queryKey: [`/api/kb/${userId}/articles`],
+    queryKey: [`/api/kb/${identifier}/articles`],
   });
 
   const { data: categories } = useQuery<Category[]>({
-    queryKey: [`/api/kb/${userId}/categories`],
+    queryKey: [`/api/kb/${identifier}/categories`],
   });
 
   const searchMutation = useMutation({
     mutationFn: async (query: string) => {
-      await fetch(`/api/kb/${userId}/search`, {
+      await fetch(`/api/kb/${identifier}/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query }),
@@ -39,7 +39,7 @@ export default function PublicKnowledgeBase() {
     e.preventDefault();
     if (searchQuery.trim()) {
       searchMutation.mutate(searchQuery);
-      window.location.href = `/kb/${userId}/search?q=${encodeURIComponent(searchQuery)}`;
+      window.location.href = `/kb/${identifier}/search?q=${encodeURIComponent(searchQuery)}`;
     }
   };
 
@@ -123,7 +123,7 @@ export default function PublicKnowledgeBase() {
                   </div>
                   <div className="space-y-2 mt-4">
                     {categoryArticles.slice(0, 3).map((article) => (
-                      <Link key={article.id} href={`/kb/${userId}/articles/${article.id}`}>
+                      <Link key={article.id} href={`/kb/${identifier}/articles/${article.id}`}>
                         <a className="block text-sm hover:text-primary transition-colors" data-testid={`article-link-${article.id}`}>
                           <FileText className="w-3 h-3 inline mr-2" />
                           {article.title}
@@ -144,7 +144,7 @@ export default function PublicKnowledgeBase() {
               <h2 className="text-2xl font-bold mb-6">More Articles</h2>
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {uncategorizedArticles.map((article) => (
-                  <Link key={article.id} href={`/kb/${userId}/articles/${article.id}`}>
+                  <Link key={article.id} href={`/kb/${identifier}/articles/${article.id}`}>
                     <Card className="p-4 hover-elevate" data-testid={`uncategorized-article-${article.id}`}>
                       <h3 className="font-semibold mb-2">{article.title}</h3>
                       <p className="text-xs text-muted-foreground">

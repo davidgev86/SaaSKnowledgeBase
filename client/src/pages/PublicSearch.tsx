@@ -10,16 +10,16 @@ import type { Article, KnowledgeBase } from "@shared/schema";
 export default function PublicSearch() {
   const params = useParams();
   const searchParams = new URLSearchParams(useSearch());
-  const userId = params.userId;
+  const identifier = params.identifier;
   const initialQuery = searchParams.get("q") || "";
   const [searchQuery, setSearchQuery] = useState(initialQuery);
 
   const { data: kb } = useQuery<KnowledgeBase>({
-    queryKey: [`/api/kb/${userId}`],
+    queryKey: [`/api/kb/${identifier}`],
   });
 
   const { data: articles } = useQuery<Article[]>({
-    queryKey: [`/api/kb/${userId}/search`, searchQuery],
+    queryKey: [`/api/kb/${identifier}/search`, searchQuery],
     enabled: !!searchQuery,
   });
 
@@ -38,7 +38,7 @@ export default function PublicSearch() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      window.location.href = `/kb/${userId}/search?q=${encodeURIComponent(searchQuery)}`;
+      window.location.href = `/kb/${identifier}/search?q=${encodeURIComponent(searchQuery)}`;
     }
   };
 
@@ -55,7 +55,7 @@ export default function PublicSearch() {
                   className="h-10 w-10 object-contain"
                 />
               )}
-              <Link href={`/kb/${userId}`}>
+              <Link href={`/kb/${identifier}`}>
                 <h1 className="text-2xl font-bold hover:text-primary cursor-pointer">
                   {kb?.siteTitle || "Knowledge Base"}
                 </h1>
@@ -109,7 +109,7 @@ export default function PublicSearch() {
         ) : (
           <div className="space-y-4">
             {articles.map((article) => (
-              <Link key={article.id} href={`/kb/${userId}/articles/${article.id}`}>
+              <Link key={article.id} href={`/kb/${identifier}/articles/${article.id}`}>
                 <Card className="p-6 hover-elevate" data-testid={`search-result-${article.id}`}>
                   <h3
                     className="text-lg font-semibold mb-2"

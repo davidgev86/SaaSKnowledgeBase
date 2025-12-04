@@ -8,6 +8,7 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { useAuth } from "@/hooks/useAuth";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { KnowledgeBaseProvider } from "@/context/KnowledgeBaseContext";
 
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/Landing";
@@ -46,43 +47,45 @@ function AppContent() {
       <Switch>
         <Route path="/" component={Landing} />
         <Route path="/invite/:token" component={InviteAccept} />
-        <Route path="/kb/:userId" component={PublicKnowledgeBase} />
-        <Route path="/kb/:userId/articles/:articleId" component={PublicArticle} />
-        <Route path="/kb/:userId/search" component={PublicSearch} />
+        <Route path="/kb/:identifier" component={PublicKnowledgeBase} />
+        <Route path="/kb/:identifier/articles/:articleId" component={PublicArticle} />
+        <Route path="/kb/:identifier/search" component={PublicSearch} />
         <Route component={NotFound} />
       </Switch>
     );
   }
 
   return (
-    <SidebarProvider style={sidebarStyle as React.CSSProperties}>
-      <div className="flex h-screen w-full">
-        <AppSidebar />
-        <div className="flex flex-col flex-1 overflow-hidden">
-          <header className="flex items-center justify-between gap-2 p-4 border-b">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <ThemeToggle />
-          </header>
-          <main className="flex-1 overflow-auto">
-            <Switch>
-              <Route path="/" component={Dashboard} />
-              <Route path="/articles" component={Articles} />
-              <Route path="/articles/new" component={ArticleEditor} />
-              <Route path="/articles/:id/edit" component={ArticleEditor} />
-              <Route path="/categories" component={Categories} />
-              <Route path="/team" component={Team} />
-              <Route path="/settings" component={Settings} />
-              <Route path="/analytics" component={Analytics} />
-              <Route path="/invite/:token" component={InviteAccept} />
-              <Route path="/kb/:userId" component={PublicKnowledgeBase} />
-              <Route path="/kb/:userId/articles/:articleId" component={PublicArticle} />
-              <Route path="/kb/:userId/search" component={PublicSearch} />
-              <Route component={NotFound} />
-            </Switch>
-          </main>
+    <KnowledgeBaseProvider>
+      <SidebarProvider style={sidebarStyle as React.CSSProperties}>
+        <div className="flex h-screen w-full">
+          <AppSidebar />
+          <div className="flex flex-col flex-1 overflow-hidden">
+            <header className="flex items-center justify-between gap-2 p-4 border-b">
+              <SidebarTrigger data-testid="button-sidebar-toggle" />
+              <ThemeToggle />
+            </header>
+            <main className="flex-1 overflow-auto">
+              <Switch>
+                <Route path="/" component={Dashboard} />
+                <Route path="/articles" component={Articles} />
+                <Route path="/articles/new" component={ArticleEditor} />
+                <Route path="/articles/:id/edit" component={ArticleEditor} />
+                <Route path="/categories" component={Categories} />
+                <Route path="/team" component={Team} />
+                <Route path="/settings" component={Settings} />
+                <Route path="/analytics" component={Analytics} />
+                <Route path="/invite/:token" component={InviteAccept} />
+                <Route path="/kb/:identifier" component={PublicKnowledgeBase} />
+                <Route path="/kb/:identifier/articles/:articleId" component={PublicArticle} />
+                <Route path="/kb/:identifier/search" component={PublicSearch} />
+                <Route component={NotFound} />
+              </Switch>
+            </main>
+          </div>
         </div>
-      </div>
-    </SidebarProvider>
+      </SidebarProvider>
+    </KnowledgeBaseProvider>
   );
 }
 

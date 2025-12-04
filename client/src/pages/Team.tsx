@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { UserPlus, Trash2, Mail, Check, Clock } from "lucide-react";
+import { useKnowledgeBase } from "@/context/KnowledgeBaseContext";
 import type { TeamMember } from "@shared/schema";
 
 const inviteFormSchema = z.object({
@@ -54,6 +55,7 @@ export default function Team() {
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [memberToDelete, setMemberToDelete] = useState<TeamMember | null>(null);
+  const { selectedKnowledgeBase, getApiUrl, isLoading: isKbLoading, isReady } = useKnowledgeBase();
 
   const inviteForm = useForm<z.infer<typeof inviteFormSchema>>({
     resolver: zodResolver(inviteFormSchema),
@@ -67,28 +69,29 @@ export default function Team() {
     queryKey: ["/api/auth/user"],
   });
 
-  const { data: kb } = useQuery({
-    queryKey: ["/api/knowledge-bases"],
-  });
-
   const { data: members, isLoading } = useQuery<TeamMember[]>({
-    queryKey: ["/api/team/members"],
+    queryKey: ["/api/team/members", selectedKnowledgeBase?.id],
+    queryFn: async () => {
+      const res = await fetch(getApiUrl("/api/team/members"), { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch team members");
+      return res.json();
+    },
+    enabled: !!selectedKnowledgeBase,
   });
 
-  const currentUserKb = Array.isArray(kb) ? kb[0] : kb;
   const currentUserId = user?.id;
-  const currentUserIsOwner = currentUserKb?.userId === currentUserId;
+  const currentUserIsOwner = selectedKnowledgeBase?.userId === currentUserId;
   const currentUserMember = members?.find((m) => m.userId === currentUserId);
   const currentUserRole = currentUserIsOwner ? "owner" : currentUserMember?.role || "viewer";
   const canManageTeam = currentUserRole === "owner" || currentUserRole === "admin";
 
   const inviteMutation = useMutation({
     mutationFn: async (data: z.infer<typeof inviteFormSchema>) => {
-      const response = await apiRequest("POST", "/api/team/invite", data);
+      const response = await apiRequest("POST", getApiUrl("/api/team/invite"), data);
       return response.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/team/members"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/team/members", selectedKnowledgeBase?.id] });
       setInviteDialogOpen(false);
       inviteForm.reset();
       
@@ -123,10 +126,10 @@ export default function Team() {
 
   const updateRoleMutation = useMutation({
     mutationFn: async ({ memberId, role }: { memberId: string; role: string }) => {
-      return await apiRequest("PUT", `/api/team/${memberId}/role`, { role });
+      return await apiRequest("PUT", getApiUrl(`/api/team/${memberId}/role`), { role });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/team/members"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/team/members", selectedKnowledgeBase?.id] });
       toast({
         title: "Role updated",
         description: "Team member role has been updated successfully.",
@@ -143,10 +146,10 @@ export default function Team() {
 
   const deleteMutation = useMutation({
     mutationFn: async (memberId: string) => {
-      return await apiRequest("DELETE", `/api/team/${memberId}`);
+      return await apiRequest("DELETE", getApiUrl(`/api/team/${memberId}`));
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/team/members"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/team/members", selectedKnowledgeBase?.id] });
       setDeleteDialogOpen(false);
       setMemberToDelete(null);
       toast({
@@ -200,6 +203,19 @@ export default function Team() {
       <Clock className="w-4 h-4 text-yellow-600" />
     );
   };
+
+  if (isKbLoading || !isReady) {
+    return (
+      <div className="p-6 max-w-6xl mx-auto">
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Setting up your knowledge base...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">

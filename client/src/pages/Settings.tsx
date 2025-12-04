@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
@@ -12,6 +12,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from "@/components/ui/input";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { Upload } from "lucide-react";
+import { useKnowledgeBase } from "@/context/KnowledgeBaseContext";
 import type { UploadResult } from "@uppy/core";
 import type { KnowledgeBase } from "@shared/schema";
 import { insertKnowledgeBaseSchema } from "@shared/schema";
@@ -27,12 +28,10 @@ type SettingsFormValues = z.infer<typeof settingsFormSchema>;
 export default function Settings() {
   const { toast } = useToast();
   const { user } = useAuth();
+  const { selectedKnowledgeBase, getApiUrl, refreshKnowledgeBases, isLoading: isKbLoading, isReady } = useKnowledgeBase();
 
-  const { data: knowledgeBases, isLoading } = useQuery<KnowledgeBase[]>({
-    queryKey: ["/api/knowledge-bases"],
-  });
-
-  const kb = knowledgeBases?.[0];
+  const kb = selectedKnowledgeBase;
+  const isLoading = !kb || isKbLoading || !isReady;
 
   const form = useForm<SettingsFormValues>({
     resolver: zodResolver(settingsFormSchema),
@@ -58,13 +57,14 @@ export default function Settings() {
   const saveMutation = useMutation({
     mutationFn: async (data: SettingsFormValues) => {
       if (kb) {
-        await apiRequest("PUT", `/api/knowledge-bases/${kb.id}`, data);
+        await apiRequest("PUT", getApiUrl(`/api/knowledge-bases/${kb.id}`), data);
       } else {
-        await apiRequest("POST", "/api/knowledge-bases", data);
+        await apiRequest("POST", getApiUrl("/api/knowledge-bases"), data);
       }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases"] });
+      refreshKnowledgeBases();
       toast({
         title: "Success",
         description: "Settings saved successfully",
@@ -131,11 +131,12 @@ export default function Settings() {
       // Auto-save the settings with the new logo
       if (kb) {
         const currentValues = form.getValues();
-        await apiRequest("PUT", `/api/knowledge-bases/${kb.id}`, {
+        await apiRequest("PUT", getApiUrl(`/api/knowledge-bases/${kb.id}`), {
           ...currentValues,
           logoUrl: logoPath,
         });
         queryClient.invalidateQueries({ queryKey: ["/api/knowledge-bases"] });
+        refreshKnowledgeBases();
       }
       
       toast({
@@ -268,11 +269,11 @@ export default function Settings() {
                   <div className="space-y-2">
                     <Input
                       readOnly
-                      value={`${window.location.origin}/kb/${user?.id}`}
+                      value={`${window.location.origin}/kb/${kb.slug}`}
                       data-testid="input-public-url"
                     />
                     <Button variant="outline" asChild data-testid="button-view-public">
-                      <a href={`/kb/${user?.id}`} target="_blank" rel="noopener noreferrer">
+                      <a href={`/kb/${kb.slug}`} target="_blank" rel="noopener noreferrer">
                         View Public Site
                       </a>
                     </Button>

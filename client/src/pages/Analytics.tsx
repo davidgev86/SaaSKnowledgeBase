@@ -6,6 +6,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar, ResponsiveContainer } from "recharts";
 import { Eye, Search, TrendingUp, Calendar } from "lucide-react";
 import { format, subDays, startOfDay, endOfDay, parse } from "date-fns";
+import { useKnowledgeBase } from "@/context/KnowledgeBaseContext";
 
 type DateRange = "7d" | "30d" | "90d" | "all";
 
@@ -49,6 +50,7 @@ const chartConfig = {
 
 export default function Analytics() {
   const [dateRange, setDateRange] = useState<DateRange>("30d");
+  const { selectedKnowledgeBase, getApiUrl, isLoading: isKbLoading, isReady } = useKnowledgeBase();
 
   const dateParams = useMemo(() => {
     if (dateRange === "all") return {};
@@ -64,26 +66,36 @@ export default function Analytics() {
   }, [dateRange]);
 
   const queryString = useMemo(() => {
-    if (!dateParams.startDate) return "";
-    return `?startDate=${encodeURIComponent(dateParams.startDate)}&endDate=${encodeURIComponent(dateParams.endDate)}`;
-  }, [dateParams]);
+    const params = new URLSearchParams();
+    if (dateParams.startDate) {
+      params.append("startDate", dateParams.startDate);
+      params.append("endDate", dateParams.endDate!);
+    }
+    if (selectedKnowledgeBase?.id) {
+      params.append("kbId", selectedKnowledgeBase.id);
+    }
+    const str = params.toString();
+    return str ? `?${str}` : "";
+  }, [dateParams, selectedKnowledgeBase?.id]);
 
   const { data: viewsData, isLoading: viewsLoading } = useQuery<AnalyticsViewsData>({
-    queryKey: ["/api/analytics/views", dateRange],
+    queryKey: ["/api/analytics/views", dateRange, selectedKnowledgeBase?.id],
     queryFn: async () => {
-      const res = await fetch(`/api/analytics/views${queryString}`);
+      const res = await fetch(`/api/analytics/views${queryString}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch views");
       return res.json();
     },
+    enabled: !!selectedKnowledgeBase,
   });
 
   const { data: searchData, isLoading: searchLoading } = useQuery<AnalyticsSearchData>({
-    queryKey: ["/api/analytics/searches", dateRange],
+    queryKey: ["/api/analytics/searches", dateRange, selectedKnowledgeBase?.id],
     queryFn: async () => {
-      const res = await fetch(`/api/analytics/searches${queryString}`);
+      const res = await fetch(`/api/analytics/searches${queryString}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch searches");
       return res.json();
     },
+    enabled: !!selectedKnowledgeBase,
   });
 
   const chartData = useMemo(() => {
@@ -105,7 +117,7 @@ export default function Analytics() {
     }));
   }, [searchData]);
 
-  const isLoading = viewsLoading || searchLoading;
+  const isLoading = viewsLoading || searchLoading || isKbLoading || !isReady;
 
   if (isLoading) {
     return (
