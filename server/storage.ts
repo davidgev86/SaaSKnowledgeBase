@@ -8,6 +8,7 @@ import {
   articleFeedback,
   teamMembers,
   articleRevisions,
+  integrations,
   type User,
   type UpsertUser,
   type KnowledgeBase,
@@ -24,6 +25,9 @@ import {
   type TeamMember,
   type ArticleRevision,
   type InsertArticleRevision,
+  type Integration,
+  type InsertIntegration,
+  type UpdateIntegration,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql, ilike, or } from "drizzle-orm";
@@ -77,6 +81,13 @@ export interface IStorage {
   getRevisionByVersion(articleId: string, version: number): Promise<ArticleRevision | undefined>;
   createRevision(revision: InsertArticleRevision): Promise<ArticleRevision>;
   getLatestRevisionVersion(articleId: string): Promise<number>;
+
+  getIntegrationsByKnowledgeBaseId(kbId: string): Promise<Integration[]>;
+  getIntegrationByType(kbId: string, type: string): Promise<Integration | undefined>;
+  getIntegrationById(id: string): Promise<Integration | undefined>;
+  createIntegration(integration: InsertIntegration): Promise<Integration>;
+  updateIntegration(id: string, integration: UpdateIntegration): Promise<Integration>;
+  deleteIntegration(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -507,6 +518,41 @@ export class DatabaseStorage implements IStorage {
       .from(articleRevisions)
       .where(eq(articleRevisions.articleId, articleId));
     return result?.maxVersion ?? 0;
+  }
+
+  async getIntegrationsByKnowledgeBaseId(kbId: string): Promise<Integration[]> {
+    return db.select().from(integrations).where(eq(integrations.knowledgeBaseId, kbId));
+  }
+
+  async getIntegrationByType(kbId: string, type: string): Promise<Integration | undefined> {
+    const [integration] = await db
+      .select()
+      .from(integrations)
+      .where(and(eq(integrations.knowledgeBaseId, kbId), eq(integrations.type, type)));
+    return integration;
+  }
+
+  async getIntegrationById(id: string): Promise<Integration | undefined> {
+    const [integration] = await db.select().from(integrations).where(eq(integrations.id, id));
+    return integration;
+  }
+
+  async createIntegration(integrationData: InsertIntegration): Promise<Integration> {
+    const [integration] = await db.insert(integrations).values(integrationData).returning();
+    return integration;
+  }
+
+  async updateIntegration(id: string, integrationData: UpdateIntegration): Promise<Integration> {
+    const [integration] = await db
+      .update(integrations)
+      .set({ ...integrationData, updatedAt: new Date() })
+      .where(eq(integrations.id, id))
+      .returning();
+    return integration;
+  }
+
+  async deleteIntegration(id: string): Promise<void> {
+    await db.delete(integrations).where(eq(integrations.id, id));
   }
 }
 

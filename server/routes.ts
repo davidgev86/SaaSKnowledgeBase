@@ -3,9 +3,10 @@ import { isAuthenticated } from "./replitAuth";
 import { storage } from "./storage";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
-import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema, insertTeamMemberSchema } from "@shared/schema";
+import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema, insertTeamMemberSchema, serviceNowConfigSchema } from "@shared/schema";
 import { z } from "zod";
 import { emailService } from "./email";
+import { ServiceNowService, getServiceNowCredentials } from "./services/servicenow";
 
 const inviteSchema = z.object({
   email: z.string().email(),
@@ -851,6 +852,282 @@ export function registerRoutes(app: Express) {
       res.json(updated);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
+    }
+  });
+
+  // ============ INTEGRATIONS ROUTES ============
+
+  app.get("/api/integrations", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+      
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      const canManage = await checkUserCanManage(userId, kbId);
+      if (!canManage) {
+        return res.status(403).json({ message: "Only owners and admins can manage integrations" });
+      }
+
+      const integrations = await storage.getIntegrationsByKnowledgeBaseId(kbId);
+      res.json(integrations);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/integrations/:type", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+      const type = req.params.type;
+      
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      const canManage = await checkUserCanManage(userId, kbId);
+      if (!canManage) {
+        return res.status(403).json({ message: "Only owners and admins can manage integrations" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, type);
+      res.json(integration || null);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.put("/api/integrations/:type", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+      const type = req.params.type;
+      
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      const canManage = await checkUserCanManage(userId, kbId);
+      if (!canManage) {
+        return res.status(403).json({ message: "Only owners and admins can manage integrations" });
+      }
+
+      const { enabled, config } = req.body;
+      
+      let integration = await storage.getIntegrationByType(kbId, type);
+      
+      if (integration) {
+        integration = await storage.updateIntegration(integration.id, {
+          enabled: enabled ?? integration.enabled,
+          config: config ?? integration.config,
+        });
+      } else {
+        integration = await storage.createIntegration({
+          knowledgeBaseId: kbId,
+          type,
+          enabled: enabled ?? false,
+          config: config ?? {},
+        });
+      }
+
+      res.json(integration);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/integrations/:type", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+      const type = req.params.type;
+      
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      const canManage = await checkUserCanManage(userId, kbId);
+      if (!canManage) {
+        return res.status(403).json({ message: "Only owners and admins can manage integrations" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, type);
+      if (integration) {
+        await storage.deleteIntegration(integration.id);
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // ServiceNow-specific routes
+  app.post("/api/integrations/servicenow/test", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+      
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      const canManage = await checkUserCanManage(userId, kbId);
+      if (!canManage) {
+        return res.status(403).json({ message: "Only owners and admins can test integrations" });
+      }
+
+      const credentials = getServiceNowCredentials();
+      if (!credentials) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "ServiceNow credentials not configured. Please add SERVICENOW_USERNAME and SERVICENOW_PASSWORD secrets." 
+        });
+      }
+
+      const { instanceUrl } = req.body;
+      if (!instanceUrl) {
+        return res.status(400).json({ success: false, message: "Instance URL is required" });
+      }
+
+      const service = new ServiceNowService(instanceUrl, credentials);
+      const result = await service.testConnection();
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.get("/api/integrations/servicenow/knowledge-bases", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+      
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      const canManage = await checkUserCanManage(userId, kbId);
+      if (!canManage) {
+        return res.status(403).json({ message: "Only owners and admins can access integrations" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'servicenow');
+      if (!integration?.config) {
+        return res.status(400).json({ message: "ServiceNow integration not configured" });
+      }
+
+      const credentials = getServiceNowCredentials();
+      if (!credentials) {
+        return res.status(400).json({ message: "ServiceNow credentials not configured" });
+      }
+
+      const config = integration.config as { instanceUrl?: string };
+      if (!config.instanceUrl) {
+        return res.status(400).json({ message: "ServiceNow instance URL not configured" });
+      }
+
+      const service = new ServiceNowService(config.instanceUrl, credentials);
+      const knowledgeBases = await service.getKnowledgeBases();
+      res.json(knowledgeBases);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/integrations/servicenow/sync", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+      
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      const canManage = await checkUserCanManage(userId, kbId);
+      if (!canManage) {
+        return res.status(403).json({ message: "Only owners and admins can sync integrations" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'servicenow');
+      if (!integration?.enabled) {
+        return res.status(400).json({ message: "ServiceNow integration not enabled" });
+      }
+
+      const credentials = getServiceNowCredentials();
+      if (!credentials) {
+        return res.status(400).json({ message: "ServiceNow credentials not configured" });
+      }
+
+      const config = integration.config as { instanceUrl?: string; knowledgeBaseId?: string };
+      if (!config.instanceUrl || !config.knowledgeBaseId) {
+        return res.status(400).json({ message: "ServiceNow integration not fully configured" });
+      }
+
+      const articles = await storage.getArticlesByKnowledgeBaseId(kbId);
+      const publicArticles = articles.filter(a => a.isPublic);
+
+      const service = new ServiceNowService(config.instanceUrl, credentials);
+      const result = await service.syncArticles(publicArticles, config.knowledgeBaseId);
+
+      await storage.updateIntegration(integration.id, { lastSyncAt: new Date() } as any);
+
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Public endpoint to get ServiceNow incident form URL for an article
+  app.get("/api/kb/:identifier/articles/:articleId/incident-form", async (req, res) => {
+    try {
+      const { identifier, articleId } = req.params;
+      
+      let kb = await storage.getKnowledgeBaseBySlug(identifier);
+      if (!kb) {
+        kb = await storage.getKnowledgeBaseById(identifier);
+      }
+      
+      if (!kb) {
+        return res.status(404).json({ message: "Knowledge base not found" });
+      }
+
+      const article = await storage.getArticleById(articleId);
+      if (!article || !article.isPublic || article.knowledgeBaseId !== kb.id) {
+        return res.status(404).json({ message: "Article not found" });
+      }
+
+      const integration = await storage.getIntegrationByType(kb.id, 'servicenow');
+      if (!integration?.enabled) {
+        return res.status(404).json({ message: "ServiceNow integration not enabled", available: false });
+      }
+
+      const config = integration.config as { instanceUrl?: string; incidentFormEnabled?: boolean };
+      if (!config.incidentFormEnabled || !config.instanceUrl) {
+        return res.status(404).json({ message: "Incident form not enabled", available: false });
+      }
+
+      const articleUrl = `${req.protocol}://${req.get('host')}/kb/${kb.slug}/articles/${article.id}`;
+      
+      const credentials = getServiceNowCredentials();
+      if (credentials) {
+        const service = new ServiceNowService(config.instanceUrl, credentials);
+        const formUrl = service.generateIncidentFormUrl(article.title, articleUrl);
+        res.json({ available: true, formUrl });
+      } else {
+        const params = new URLSearchParams({
+          sysparm_query: `short_description=Help needed: ${article.title}`,
+        });
+        res.json({ 
+          available: true, 
+          formUrl: `${config.instanceUrl}/incident.do?${params.toString()}` 
+        });
+      }
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 }

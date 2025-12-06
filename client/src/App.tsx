@@ -19,6 +19,7 @@ import Categories from "@/pages/Categories";
 import Settings from "@/pages/Settings";
 import Analytics from "@/pages/Analytics";
 import Team from "@/pages/Team";
+import Integrations from "@/pages/Integrations";
 import PublicKnowledgeBase from "@/pages/PublicKnowledgeBase";
 import PublicArticle from "@/pages/PublicArticle";
 import PublicSearch from "@/pages/PublicSearch";
@@ -75,6 +76,7 @@ function AppContent() {
                 <Route path="/team" component={Team} />
                 <Route path="/settings" component={Settings} />
                 <Route path="/analytics" component={Analytics} />
+                <Route path="/integrations" component={Integrations} />
                 <Route path="/invite/:token" component={InviteAccept} />
                 <Route path="/kb/:identifier" component={PublicKnowledgeBase} />
                 <Route path="/kb/:identifier/articles/:articleId" component={PublicArticle} />

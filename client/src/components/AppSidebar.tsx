@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { Home, FileText, FolderOpen, Settings, BarChart3, Users, LogOut, ChevronDown, Plus, BookOpen, Check } from "lucide-react";
+import { Home, FileText, FolderOpen, Settings, BarChart3, Users, LogOut, ChevronDown, Plus, BookOpen, Check, Plug2 } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -56,6 +56,11 @@ const menuItems = [
     title: "Analytics",
     url: "/analytics",
     icon: BarChart3,
+  },
+  {
+    title: "Integrations",
+    url: "/integrations",
+    icon: Plug2,
   },
   {
     title: "Settings",

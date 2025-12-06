@@ -266,3 +266,45 @@ export const updateTeamMemberSchema = insertTeamMemberSchema.partial().extend({
 export type InsertTeamMember = z.infer<typeof insertTeamMemberSchema>;
 export type UpdateTeamMember = z.infer<typeof updateTeamMemberSchema>;
 export type TeamMember = typeof teamMembers.$inferSelect;
+
+// Integrations table - Store integration configurations per KB
+export const integrations = pgTable("integrations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  knowledgeBaseId: varchar("knowledge_base_id").notNull().references(() => knowledgeBases.id, { onDelete: "cascade" }),
+  type: varchar("type").notNull(), // servicenow, slack, zendesk, intercom, etc.
+  enabled: boolean("enabled").notNull().default(false),
+  config: jsonb("config").$type<Record<string, unknown>>().default({}),
+  lastSyncAt: timestamp("last_sync_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const integrationsRelations = relations(integrations, ({ one }) => ({
+  knowledgeBase: one(knowledgeBases, {
+    fields: [integrations.knowledgeBaseId],
+    references: [knowledgeBases.id],
+  }),
+}));
+
+export const insertIntegrationSchema = createInsertSchema(integrations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  lastSyncAt: true,
+});
+
+export const updateIntegrationSchema = insertIntegrationSchema.partial();
+
+export type InsertIntegration = z.infer<typeof insertIntegrationSchema>;
+export type UpdateIntegration = z.infer<typeof updateIntegrationSchema>;
+export type Integration = typeof integrations.$inferSelect;
+
+// ServiceNow specific config type
+export const serviceNowConfigSchema = z.object({
+  instanceUrl: z.string().url().optional(),
+  knowledgeBaseId: z.string().optional(), // ServiceNow KB sys_id
+  incidentFormEnabled: z.boolean().default(false),
+  autoSync: z.boolean().default(false),
+});
+
+export type ServiceNowConfig = z.infer<typeof serviceNowConfigSchema>;
