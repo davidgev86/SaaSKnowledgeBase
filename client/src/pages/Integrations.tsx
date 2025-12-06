@@ -92,6 +92,7 @@ export default function Integrations() {
   const [teamsConnecting, setTeamsConnecting] = useState(false);
   const [selectedTeamId, setSelectedTeamId] = useState<string>((teamsConfig.teamId as string) || "");
   const [selectedChannelId, setSelectedChannelId] = useState<string>((teamsConfig.channelId as string) || "");
+  const [teamsWebhookUrl, setTeamsWebhookUrl] = useState<string>((teamsConfig.webhookUrl as string) || "");
 
   const form = useForm<ServiceNowFormValues>({
     resolver: zodResolver(serviceNowFormSchema),
@@ -429,6 +430,26 @@ export default function Integrations() {
         title: data.success ? "Success" : "Failed",
         description: data.message,
         variant: data.success ? "default" : "destructive",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const teamsWebhookSaveMutation = useMutation({
+    mutationFn: async (webhookUrl: string) => {
+      await apiRequest("PUT", getApiUrl("/api/integrations/teams/webhook"), { webhookUrl });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations", selectedKnowledgeBase?.id] });
+      toast({
+        title: "Success",
+        description: "Webhook URL saved",
       });
     },
     onError: (error: Error) => {
@@ -1060,10 +1081,21 @@ export default function Integrations() {
                 <div className="flex gap-2">
                   <Input
                     placeholder="https://outlook.webhook.office.com/..."
-                    value={(teamsConfig.webhookUrl as string) || ""}
-                    onChange={(e) => teamsConfigMutation.mutate({ webhookUrl: e.target.value })}
+                    value={teamsWebhookUrl}
+                    onChange={(e) => setTeamsWebhookUrl(e.target.value)}
                     data-testid="input-teams-webhook"
                   />
+                  <Button
+                    onClick={() => teamsWebhookSaveMutation.mutate(teamsWebhookUrl)}
+                    disabled={teamsWebhookSaveMutation.isPending || !teamsWebhookUrl.trim()}
+                    data-testid="button-save-teams-webhook"
+                  >
+                    {teamsWebhookSaveMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      "Save"
+                    )}
+                  </Button>
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">
                   Create an incoming webhook in Teams: Channel Settings → Connectors → Incoming Webhook

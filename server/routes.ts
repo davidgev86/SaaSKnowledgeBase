@@ -1726,6 +1726,52 @@ export function registerRoutes(app: Express) {
     }
   });
 
+  // Save Teams webhook URL (creates integration if it doesn't exist)
+  app.put("/api/integrations/teams/webhook", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can configure Teams" });
+      }
+
+      const { webhookUrl } = req.body;
+      if (!webhookUrl || typeof webhookUrl !== 'string') {
+        return res.status(400).json({ message: "Webhook URL is required" });
+      }
+
+      let integration = await storage.getIntegrationByType(kbId, 'teams');
+      
+      if (integration) {
+        const existingConfig = integration.config as TeamsConfig;
+        const updated = await storage.updateIntegration(integration.id, {
+          config: { ...existingConfig, webhookUrl, notifyOnPublish: true },
+        });
+        res.json(sanitizeIntegrationConfig(updated));
+      } else {
+        const webhookConfig: TeamsConfig = {
+          webhookUrl,
+          searchEnabled: false,
+          notifyOnPublish: true,
+        };
+        const created = await storage.createIntegration({
+          knowledgeBaseId: kbId,
+          type: 'teams',
+          enabled: true,
+          config: webhookConfig,
+        });
+        res.json(sanitizeIntegrationConfig(created));
+      }
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // Teams disconnect
   app.post("/api/integrations/teams/disconnect", isAuthenticated, async (req, res) => {
     try {
