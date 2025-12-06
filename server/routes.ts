@@ -3,7 +3,7 @@ import { isAuthenticated } from "./replitAuth";
 import { storage } from "./storage";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
-import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema, insertTeamMemberSchema, serviceNowConfigSchema, slackConfigSchema, ssoConfigSchema, SSOConfig } from "@shared/schema";
+import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema, insertTeamMemberSchema, serviceNowConfigSchema, slackConfigSchema, ssoConfigSchema, SSOConfig, TeamsConfig } from "@shared/schema";
 import { z } from "zod";
 import { emailService } from "./email";
 import { ServiceNowService, getServiceNowCredentials } from "./services/servicenow";
@@ -1433,6 +1433,331 @@ export function registerRoutes(app: Express) {
         });
       } else {
         res.status(400).json({ message: "No channel configured for notifications" });
+      }
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ============ MICROSOFT TEAMS INTEGRATION ROUTES ============
+
+  // Get Teams configuration
+  app.get("/api/integrations/teams", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can view Teams settings" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'teams');
+      res.json(sanitizeIntegrationConfig(integration) || null);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Teams OAuth initiation
+  app.get("/api/integrations/teams/oauth/url", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can connect Teams" });
+      }
+
+      const { getTeamsCredentials, TeamsService } = await import("./services/teams");
+      const credentials = getTeamsCredentials();
+      if (!credentials) {
+        return res.status(400).json({ 
+          message: "Teams credentials not configured. Set TEAMS_CLIENT_ID, TEAMS_CLIENT_SECRET, and TEAMS_TENANT_ID." 
+        });
+      }
+
+      const redirectUri = `${req.protocol}://${req.get('host')}/api/integrations/teams/oauth/callback`;
+      const service = new TeamsService(credentials, { searchEnabled: false, notifyOnPublish: false });
+      const oauthUrl = service.getOAuthUrl(kbId, redirectUri);
+
+      res.json({ url: oauthUrl });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Teams OAuth callback
+  app.get("/api/integrations/teams/oauth/callback", async (req, res) => {
+    try {
+      const { code, state, error: oauthError } = req.query;
+
+      if (oauthError) {
+        return res.redirect(`/integrations?tab=teams&error=${encodeURIComponent(oauthError as string)}`);
+      }
+
+      if (!code || !state) {
+        return res.redirect("/integrations?tab=teams&error=Invalid+callback+parameters");
+      }
+
+      const { getTeamsCredentials, TeamsService } = await import("./services/teams");
+      const credentials = getTeamsCredentials();
+      if (!credentials) {
+        return res.redirect("/integrations?tab=teams&error=Teams+not+configured");
+      }
+
+      const service = new TeamsService(credentials, { searchEnabled: false, notifyOnPublish: false });
+      const stateData = service.parseState(state as string);
+      
+      if (!stateData) {
+        return res.redirect("/integrations?tab=teams&error=Invalid+state");
+      }
+
+      const kbId = stateData.kbId;
+      const redirectUri = `${req.protocol}://${req.get('host')}/api/integrations/teams/oauth/callback`;
+      const tokenResponse = await service.exchangeCodeForToken(code as string, redirectUri);
+
+      if (!tokenResponse) {
+        return res.redirect("/integrations?tab=teams&error=Token+exchange+failed");
+      }
+
+      const teamsConfig: TeamsConfig = {
+        clientId: credentials.clientId,
+        tenantId: credentials.tenantId,
+        accessToken: tokenResponse.access_token,
+        refreshToken: tokenResponse.refresh_token,
+        tokenExpiresAt: Date.now() + tokenResponse.expires_in * 1000,
+        searchEnabled: false,
+        notifyOnPublish: false,
+      };
+
+      let integration = await storage.getIntegrationByType(kbId, 'teams');
+
+      if (integration) {
+        await storage.updateIntegration(integration.id, {
+          enabled: true,
+          config: teamsConfig,
+        });
+      } else {
+        await storage.createIntegration({
+          knowledgeBaseId: kbId,
+          type: 'teams',
+          enabled: true,
+          config: teamsConfig,
+        });
+      }
+
+      res.redirect("/integrations?tab=teams&success=connected");
+    } catch (error: any) {
+      console.error("Teams OAuth callback error:", error);
+      res.redirect(`/integrations?tab=teams&error=${encodeURIComponent(error.message)}`);
+    }
+  });
+
+  // Get available teams for connected account
+  app.get("/api/integrations/teams/teams", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can manage Teams" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'teams');
+      if (!integration?.enabled) {
+        return res.status(400).json({ message: "Teams not connected" });
+      }
+
+      const config = integration.config as TeamsConfig;
+      const { createTeamsService } = await import("./services/teams");
+      const service = createTeamsService(config);
+      
+      if (!service) {
+        return res.status(400).json({ message: "Teams credentials not configured" });
+      }
+
+      const teams = await service.getJoinedTeams();
+      res.json(teams);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Get channels for a team
+  app.get("/api/integrations/teams/channels", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+      const teamId = req.query.teamId as string;
+
+      if (!kbId || !teamId) {
+        return res.status(400).json({ message: "Knowledge base ID and team ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can manage Teams" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'teams');
+      if (!integration?.enabled) {
+        return res.status(400).json({ message: "Teams not connected" });
+      }
+
+      const config = integration.config as TeamsConfig;
+      const { createTeamsService } = await import("./services/teams");
+      const service = createTeamsService(config);
+      
+      if (!service) {
+        return res.status(400).json({ message: "Teams credentials not configured" });
+      }
+
+      const channels = await service.getTeamChannels(teamId);
+      res.json(channels);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Update Teams configuration
+  app.put("/api/integrations/teams/config", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can configure Teams" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'teams');
+      if (!integration) {
+        return res.status(400).json({ message: "Teams not connected" });
+      }
+
+      const { teamId, teamName, channelId, channelName, webhookUrl, searchEnabled, notifyOnPublish } = req.body;
+      
+      const existingConfig = integration.config as TeamsConfig;
+      const updatedConfig: TeamsConfig = {
+        ...existingConfig,
+        teamId: teamId ?? existingConfig.teamId,
+        teamName: teamName ?? existingConfig.teamName,
+        channelId: channelId ?? existingConfig.channelId,
+        channelName: channelName ?? existingConfig.channelName,
+        webhookUrl: webhookUrl ?? existingConfig.webhookUrl,
+        searchEnabled: searchEnabled ?? existingConfig.searchEnabled,
+        notifyOnPublish: notifyOnPublish ?? existingConfig.notifyOnPublish,
+      };
+
+      const updated = await storage.updateIntegration(integration.id, {
+        config: updatedConfig,
+      });
+
+      res.json(sanitizeIntegrationConfig(updated));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Teams disconnect
+  app.post("/api/integrations/teams/disconnect", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can disconnect Teams" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'teams');
+      if (integration) {
+        await storage.deleteIntegration(integration.id);
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Test Teams connection
+  app.post("/api/integrations/teams/test", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can test Teams" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'teams');
+      if (!integration?.enabled) {
+        return res.status(400).json({ message: "Teams integration not enabled" });
+      }
+
+      const config = integration.config as TeamsConfig;
+      const { createTeamsService } = await import("./services/teams");
+      const service = createTeamsService(config);
+      
+      if (!service) {
+        return res.status(400).json({ message: "Teams credentials not configured" });
+      }
+
+      const testCard = {
+        type: "AdaptiveCard" as const,
+        version: "1.4",
+        $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+        body: [
+          {
+            type: "TextBlock",
+            text: "Test Notification",
+            weight: "Bolder",
+            size: "Large",
+          },
+          {
+            type: "TextBlock",
+            text: "This is a test notification from your Knowledge Base!",
+            wrap: true,
+          },
+        ],
+      };
+
+      if (config.webhookUrl) {
+        const result = await service.postToWebhook(config.webhookUrl, testCard);
+        res.json({ 
+          success: result.success, 
+          message: result.success ? "Test message sent!" : result.error 
+        });
+      } else if (config.teamId && config.channelId) {
+        const result = await service.sendChannelMessage(config.teamId, config.channelId, testCard);
+        res.json({ 
+          success: result.success, 
+          message: result.success ? "Test message sent!" : result.error 
+        });
+      } else {
+        res.status(400).json({ message: "No channel or webhook configured for notifications" });
       }
     } catch (error: any) {
       res.status(500).json({ message: error.message });
