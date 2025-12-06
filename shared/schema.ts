@@ -346,13 +346,34 @@ export const ssoConfigSchema = z.object({
 
 export type SSOConfig = z.infer<typeof ssoConfigSchema>;
 
-// Microsoft Teams specific config type (placeholder for future)
+// Microsoft Teams specific config type
 export const teamsConfigSchema = z.object({
+  // Azure AD App credentials
   tenantId: z.string().optional(),
+  clientId: z.string().optional(),
+  clientSecret: z.string().optional(), // Encrypted in responses
+  
+  // OAuth tokens (stored after connection)
+  accessToken: z.string().optional(),
+  refreshToken: z.string().optional(),
+  tokenExpiresAt: z.number().optional(),
+  
+  // Connected team/channel info
   teamId: z.string().optional(),
+  teamName: z.string().optional(),
   channelId: z.string().optional(),
-  botEnabled: z.boolean().default(false),
-  notifyOnPublish: z.boolean().default(false),
+  channelName: z.string().optional(),
+  
+  // Webhook URL for incoming messages (if using incoming webhook instead of bot)
+  webhookUrl: z.string().optional(),
+  
+  // Feature toggles
+  searchEnabled: z.boolean().default(false), // Enable /kb search command
+  notifyOnPublish: z.boolean().default(false), // Post to channel when article published
+  
+  // Bot configuration
+  botId: z.string().optional(),
+  botServiceUrl: z.string().optional(),
 });
 
 export type TeamsConfig = z.infer<typeof teamsConfigSchema>;
