@@ -3,10 +3,11 @@ import { isAuthenticated } from "./replitAuth";
 import { storage } from "./storage";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
-import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema, insertTeamMemberSchema, serviceNowConfigSchema } from "@shared/schema";
+import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema, insertTeamMemberSchema, serviceNowConfigSchema, slackConfigSchema } from "@shared/schema";
 import { z } from "zod";
 import { emailService } from "./email";
 import { ServiceNowService, getServiceNowCredentials } from "./services/servicenow";
+import { SlackService, getSlackCredentials } from "./services/slack";
 
 const inviteSchema = z.object({
   email: z.string().email(),
@@ -857,6 +858,14 @@ export function registerRoutes(app: Express) {
 
   // ============ INTEGRATIONS ROUTES ============
 
+  function sanitizeIntegrationConfig(integration: any) {
+    if (!integration) return integration;
+    const config = { ...integration.config } as Record<string, unknown>;
+    delete config.accessToken;
+    delete config.webhookUrl;
+    return { ...integration, config };
+  }
+
   app.get("/api/integrations", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
@@ -872,7 +881,7 @@ export function registerRoutes(app: Express) {
       }
 
       const integrations = await storage.getIntegrationsByKnowledgeBaseId(kbId);
-      res.json(integrations);
+      res.json(integrations.map(sanitizeIntegrationConfig));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -894,7 +903,7 @@ export function registerRoutes(app: Express) {
       }
 
       const integration = await storage.getIntegrationByType(kbId, type);
-      res.json(integration || null);
+      res.json(sanitizeIntegrationConfig(integration) || null);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -1125,6 +1134,303 @@ export function registerRoutes(app: Express) {
           available: true, 
           formUrl: `${config.instanceUrl}/incident.do?${params.toString()}` 
         });
+      }
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ============ SLACK INTEGRATION ROUTES ============
+
+  // Slack OAuth initiation
+  app.get("/api/integrations/slack/oauth/url", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can configure Slack" });
+      }
+
+      const credentials = getSlackCredentials();
+      if (!credentials) {
+        return res.status(400).json({ 
+          message: "Slack credentials not configured. Add SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, and SLACK_SIGNING_SECRET secrets." 
+        });
+      }
+
+      const redirectUri = `${req.protocol}://${req.get('host')}/api/integrations/slack/oauth/callback`;
+      const service = new SlackService(credentials);
+      const oauthUrl = service.getOAuthUrl(kbId, redirectUri);
+
+      res.json({ url: oauthUrl });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Slack OAuth callback
+  app.get("/api/integrations/slack/oauth/callback", async (req, res) => {
+    try {
+      const { code, state, error: oauthError } = req.query;
+
+      if (oauthError) {
+        return res.redirect(`/integrations?slack_error=${encodeURIComponent(oauthError as string)}`);
+      }
+
+      if (!code || !state) {
+        return res.redirect("/integrations?slack_error=missing_params");
+      }
+
+      let kbId: string;
+      try {
+        const decoded = JSON.parse(Buffer.from(state as string, 'base64').toString());
+        kbId = decoded.kbId;
+      } catch {
+        return res.redirect("/integrations?slack_error=invalid_state");
+      }
+
+      const credentials = getSlackCredentials();
+      if (!credentials) {
+        return res.redirect("/integrations?slack_error=credentials_not_configured");
+      }
+
+      const redirectUri = `${req.protocol}://${req.get('host')}/api/integrations/slack/oauth/callback`;
+      const service = new SlackService(credentials);
+      const tokenResponse = await service.exchangeCodeForToken(code as string, redirectUri);
+
+      if (!tokenResponse.ok) {
+        return res.redirect(`/integrations?slack_error=${encodeURIComponent(tokenResponse.error || 'oauth_failed')}`);
+      }
+
+      const config: Record<string, unknown> = {
+        teamId: tokenResponse.team?.id,
+        teamName: tokenResponse.team?.name,
+        accessToken: tokenResponse.access_token,
+        slashCommandEnabled: true,
+        notifyOnPublish: false,
+      };
+
+      if (tokenResponse.incoming_webhook) {
+        config.channelId = tokenResponse.incoming_webhook.channel_id;
+        config.channelName = tokenResponse.incoming_webhook.channel;
+        config.webhookUrl = tokenResponse.incoming_webhook.url;
+      }
+
+      const existing = await storage.getIntegrationByType(kbId, 'slack');
+      if (existing) {
+        await storage.updateIntegration(existing.id, {
+          enabled: true,
+          config,
+        });
+      } else {
+        await storage.createIntegration({
+          knowledgeBaseId: kbId,
+          type: 'slack',
+          enabled: true,
+          config,
+        });
+      }
+
+      res.redirect("/integrations?slack_success=true");
+    } catch (error: any) {
+      console.error("Slack OAuth error:", error);
+      res.redirect(`/integrations?slack_error=${encodeURIComponent(error.message)}`);
+    }
+  });
+
+  // Slack disconnect
+  app.post("/api/integrations/slack/disconnect", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can disconnect Slack" });
+      }
+
+      const existing = await storage.getIntegrationByType(kbId, 'slack');
+      if (existing) {
+        await storage.updateIntegration(existing.id, {
+          enabled: false,
+          config: {},
+        });
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Slack config update (for toggling features only - protects sensitive credentials)
+  app.put("/api/integrations/slack/config", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can configure Slack" });
+      }
+
+      const existing = await storage.getIntegrationByType(kbId, 'slack');
+      if (!existing) {
+        return res.status(404).json({ message: "Slack integration not found" });
+      }
+
+      const allowedUpdates = slackConfigSchema.pick({
+        slashCommandEnabled: true,
+        notifyOnPublish: true,
+      }).partial().parse(req.body);
+
+      const existingConfig = existing.config as Record<string, unknown>;
+      const newConfig = { ...existingConfig, ...allowedUpdates };
+
+      await storage.updateIntegration(existing.id, { config: newConfig });
+
+      const updated = await storage.getIntegrationByType(kbId, 'slack');
+      
+      const safeConfig = { ...updated?.config } as Record<string, unknown>;
+      delete safeConfig.accessToken;
+      delete safeConfig.webhookUrl;
+      
+      res.json({ ...updated, config: safeConfig });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Slack slash command webhook (public endpoint)
+  app.post("/api/slack/commands", async (req, res) => {
+    try {
+      const credentials = getSlackCredentials();
+      if (!credentials) {
+        return res.status(500).json({ text: "Slack integration not configured" });
+      }
+
+      const signature = req.headers['x-slack-signature'] as string;
+      const timestamp = req.headers['x-slack-request-timestamp'] as string;
+
+      if (!signature || !timestamp) {
+        return res.status(401).json({ text: "Missing signature" });
+      }
+
+      const service = new SlackService(credentials);
+      
+      const bodyString = typeof req.body === 'string' 
+        ? req.body 
+        : new URLSearchParams(req.body).toString();
+
+      if (!service.verifySlackRequest(signature, timestamp, bodyString)) {
+        return res.status(401).json({ text: "Invalid signature" });
+      }
+
+      const { team_id, text } = req.body;
+      const { action, query } = service.parseSlashCommand(text || '');
+
+      if (action === 'help' || !query) {
+        return res.json(service.formatHelpMessage());
+      }
+
+      const integrations = await storage.getIntegrationsByType('slack');
+      const integration = integrations.find(i => {
+        const config = i.config as { teamId?: string; slashCommandEnabled?: boolean };
+        return config.teamId === team_id && config.slashCommandEnabled !== false;
+      });
+
+      if (!integration) {
+        return res.json({
+          response_type: "ephemeral",
+          text: "This Slack workspace is not connected to a knowledge base.",
+        });
+      }
+
+      const kb = await storage.getKnowledgeBaseById(integration.knowledgeBaseId);
+      if (!kb) {
+        return res.json({
+          response_type: "ephemeral",
+          text: "Knowledge base not found.",
+        });
+      }
+
+      const articles = await storage.searchPublicArticles(kb.id, query);
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const response = service.formatSearchResults(articles, query, kb.slug, baseUrl);
+
+      res.json(response);
+    } catch (error: any) {
+      console.error("Slack command error:", error);
+      res.json({
+        response_type: "ephemeral",
+        text: `Error processing command: ${error.message}`,
+      });
+    }
+  });
+
+  // Test notification endpoint
+  app.post("/api/integrations/slack/test", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can test Slack" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'slack');
+      if (!integration?.enabled) {
+        return res.status(400).json({ message: "Slack integration not enabled" });
+      }
+
+      const config = integration.config as { accessToken?: string; channelId?: string; webhookUrl?: string };
+      
+      if (config.webhookUrl) {
+        const response = await fetch(config.webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: "Test notification from your Knowledge Base!",
+          }),
+        });
+
+        if (response.ok) {
+          res.json({ success: true, message: "Test message sent!" });
+        } else {
+          res.json({ success: false, message: "Failed to send test message" });
+        }
+      } else if (config.accessToken && config.channelId) {
+        const credentials = getSlackCredentials();
+        if (!credentials) {
+          return res.status(400).json({ message: "Slack credentials not configured" });
+        }
+
+        const service = new SlackService(credentials, config.accessToken);
+        const result = await service.postMessage(config.channelId, {
+          text: "Test notification from your Knowledge Base!",
+        });
+
+        res.json({ 
+          success: result.ok, 
+          message: result.ok ? "Test message sent!" : result.error 
+        });
+      } else {
+        res.status(400).json({ message: "No channel configured for notifications" });
       }
     } catch (error: any) {
       res.status(500).json({ message: error.message });

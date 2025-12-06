@@ -24,6 +24,17 @@ Preferred communication style: Simple, everyday language.
 - **Article Versioning**: Automatic version history on article saves, view revisions in sidebar, restore to previous versions
 - **Dark Mode**: Full dark mode support with theme toggle on all pages (Light/Dark/System preference)
 
+### Integrations
+- **ServiceNow Integration**: Sync articles to ServiceNow Knowledge Base, create incidents from public articles
+  - Requires SERVICENOW_USERNAME and SERVICENOW_PASSWORD secrets
+  - Configure instance URL in Settings > Integrations
+  - Features: connection testing, auto-sync, incident form on public articles
+- **Slack Integration**: Search articles from Slack with /kb slash command
+  - Requires SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_SIGNING_SECRET secrets
+  - OAuth flow connects workspace to knowledge base
+  - Features: slash command search, optional publish notifications
+  - Webhook URL for slash commands: `/api/slack/commands`
+
 ### Bug Fixes Applied
 - Logo upload: Fixed JSON response parsing and object path construction (`/objects/${param}`)
 - Public search: Uses Drizzle ORM `ilike()` and `or()` operators for proper search

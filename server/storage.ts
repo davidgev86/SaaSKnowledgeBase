@@ -84,10 +84,13 @@ export interface IStorage {
 
   getIntegrationsByKnowledgeBaseId(kbId: string): Promise<Integration[]>;
   getIntegrationByType(kbId: string, type: string): Promise<Integration | undefined>;
+  getIntegrationsByType(type: string): Promise<Integration[]>;
   getIntegrationById(id: string): Promise<Integration | undefined>;
   createIntegration(integration: InsertIntegration): Promise<Integration>;
   updateIntegration(id: string, integration: UpdateIntegration): Promise<Integration>;
   deleteIntegration(id: string): Promise<void>;
+
+  searchPublicArticles(kbId: string, query: string): Promise<Article[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -553,6 +556,28 @@ export class DatabaseStorage implements IStorage {
 
   async deleteIntegration(id: string): Promise<void> {
     await db.delete(integrations).where(eq(integrations.id, id));
+  }
+
+  async getIntegrationsByType(type: string): Promise<Integration[]> {
+    return db.select().from(integrations).where(eq(integrations.type, type));
+  }
+
+  async searchPublicArticles(kbId: string, query: string): Promise<Article[]> {
+    const searchTerm = `%${query}%`;
+    return db
+      .select()
+      .from(articles)
+      .where(
+        and(
+          eq(articles.knowledgeBaseId, kbId),
+          eq(articles.isPublic, true),
+          or(
+            ilike(articles.title, searchTerm),
+            ilike(articles.content, searchTerm)
+          )
+        )
+      )
+      .limit(10);
   }
 }
 

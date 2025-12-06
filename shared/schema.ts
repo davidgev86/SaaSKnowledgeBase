@@ -308,3 +308,15 @@ export const serviceNowConfigSchema = z.object({
 });
 
 export type ServiceNowConfig = z.infer<typeof serviceNowConfigSchema>;
+
+// Slack specific config type
+export const slackConfigSchema = z.object({
+  teamId: z.string().optional(), // Slack workspace ID
+  teamName: z.string().optional(), // Slack workspace name
+  channelId: z.string().optional(), // Default channel for notifications
+  channelName: z.string().optional(),
+  notifyOnPublish: z.boolean().default(false), // Post when article is published
+  slashCommandEnabled: z.boolean().default(true), // Enable /kb slash command
+});
+
+export type SlackConfig = z.infer<typeof slackConfigSchema>;

@@ -58,6 +58,10 @@ export default function Integrations() {
   const serviceNowIntegration = integrations?.find(i => i.type === "servicenow");
   const serviceNowConfig = (serviceNowIntegration?.config as Record<string, unknown>) || {};
 
+  const slackIntegration = integrations?.find(i => i.type === "slack");
+  const slackConfig = (slackIntegration?.config as Record<string, unknown>) || {};
+  const [slackConnecting, setSlackConnecting] = useState(false);
+
   const form = useForm<ServiceNowFormValues>({
     resolver: zodResolver(serviceNowFormSchema),
     defaultValues: {
@@ -125,6 +129,92 @@ export default function Integrations() {
     },
   });
 
+  const connectSlack = async () => {
+    setSlackConnecting(true);
+    try {
+      const res = await fetch(getApiUrl("/api/integrations/slack/oauth/url"), { credentials: "include" });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        toast({
+          title: "Error",
+          description: data.message || "Failed to get Slack authorization URL",
+          variant: "destructive",
+        });
+        setSlackConnecting(false);
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+      setSlackConnecting(false);
+    }
+  };
+
+  const slackDisconnectMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", getApiUrl("/api/integrations/slack/disconnect"));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations", selectedKnowledgeBase?.id] });
+      toast({
+        title: "Disconnected",
+        description: "Slack workspace disconnected",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const slackConfigMutation = useMutation({
+    mutationFn: async (config: Record<string, unknown>) => {
+      await apiRequest("PUT", getApiUrl("/api/integrations/slack/config"), config);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations", selectedKnowledgeBase?.id] });
+      toast({
+        title: "Success",
+        description: "Slack settings updated",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const slackTestMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", getApiUrl("/api/integrations/slack/test"));
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: data.success ? "Success" : "Failed",
+        description: data.message,
+        variant: data.success ? "default" : "destructive",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const testConnection = async () => {
     const instanceUrl = form.getValues("instanceUrl");
     if (!instanceUrl) {
@@ -185,7 +275,7 @@ export default function Integrations() {
             <Workflow className="w-4 h-4" />
             <span className="hidden sm:inline">ServiceNow</span>
           </TabsTrigger>
-          <TabsTrigger value="slack" className="gap-2" data-testid="tab-slack" disabled>
+          <TabsTrigger value="slack" className="gap-2" data-testid="tab-slack">
             <MessagesSquare className="w-4 h-4" />
             <span className="hidden sm:inline">Slack</span>
           </TabsTrigger>
@@ -374,21 +464,148 @@ export default function Integrations() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="slack">
+        <TabsContent value="slack" className="space-y-6">
           <Card>
             <CardHeader>
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
-                  <MessagesSquare className="w-6 h-6 text-purple-600 dark:text-purple-400" />
-                </div>
-                <div>
-                  <CardTitle>Slack</CardTitle>
-                  <CardDescription>Search articles from Slack with slash commands</CardDescription>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
+                    <MessagesSquare className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+                  </div>
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      Slack
+                      {slackIntegration?.enabled && (
+                        <Badge variant="secondary" className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
+                          Connected
+                        </Badge>
+                      )}
+                    </CardTitle>
+                    <CardDescription>Search articles from Slack with slash commands</CardDescription>
+                  </div>
                 </div>
               </div>
             </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground">Coming soon...</p>
+            <CardContent className="space-y-6">
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Credentials Required</AlertTitle>
+                <AlertDescription>
+                  To use this integration, add SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, and SLACK_SIGNING_SECRET to your secrets.
+                  Get these from your Slack App configuration at api.slack.com/apps.
+                </AlertDescription>
+              </Alert>
+
+              {!slackIntegration?.enabled ? (
+                <div className="flex flex-col items-center justify-center py-8 space-y-4">
+                  <MessagesSquare className="w-12 h-12 text-muted-foreground" />
+                  <p className="text-muted-foreground text-center max-w-md">
+                    Connect your Slack workspace to enable article search via the /kb slash command
+                  </p>
+                  <Button
+                    onClick={connectSlack}
+                    disabled={slackConnecting}
+                    data-testid="button-connect-slack"
+                  >
+                    {slackConnecting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Connecting...
+                      </>
+                    ) : (
+                      "Add to Slack"
+                    )}
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="p-4 rounded-lg border bg-card">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div>
+                        <p className="font-medium">{(slackConfig.teamName as string) || "Connected Workspace"}</p>
+                        {typeof slackConfig.channelName === "string" && slackConfig.channelName && (
+                          <p className="text-sm text-muted-foreground">
+                            Channel: #{slackConfig.channelName}
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => slackDisconnectMutation.mutate()}
+                        disabled={slackDisconnectMutation.isPending}
+                        data-testid="button-disconnect-slack"
+                      >
+                        Disconnect
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="flex items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-0.5">
+                        <p className="text-base font-medium">Slash Command</p>
+                        <p className="text-sm text-muted-foreground">
+                          Enable /kb search command in Slack
+                        </p>
+                      </div>
+                      <Switch
+                        checked={(slackConfig.slashCommandEnabled as boolean) ?? true}
+                        onCheckedChange={(checked) => 
+                          slackConfigMutation.mutate({ slashCommandEnabled: checked })
+                        }
+                        disabled={slackConfigMutation.isPending}
+                        data-testid="switch-slack-slash-command"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-0.5">
+                        <p className="text-base font-medium">Publish Notifications</p>
+                        <p className="text-sm text-muted-foreground">
+                          Post when articles are published
+                        </p>
+                      </div>
+                      <Switch
+                        checked={(slackConfig.notifyOnPublish as boolean) ?? false}
+                        onCheckedChange={(checked) => 
+                          slackConfigMutation.mutate({ notifyOnPublish: checked })
+                        }
+                        disabled={slackConfigMutation.isPending}
+                        data-testid="switch-slack-notify-publish"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => slackTestMutation.mutate()}
+                      disabled={slackTestMutation.isPending || !slackConfig.channelId}
+                      data-testid="button-test-slack"
+                    >
+                      {slackTestMutation.isPending ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Testing...
+                        </>
+                      ) : (
+                        "Send Test Message"
+                      )}
+                    </Button>
+                  </div>
+
+                  <div className="p-4 rounded-lg bg-muted">
+                    <p className="text-sm font-medium mb-2">Slash Command Webhook URL</p>
+                    <code className="text-xs bg-background p-2 rounded block break-all">
+                      {window.location.origin}/api/slack/commands
+                    </code>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Configure this URL in your Slack App under "Slash Commands"
+                    </p>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
