@@ -34,6 +34,23 @@ Preferred communication style: Simple, everyday language.
   - OAuth flow connects workspace to knowledge base
   - Features: slash command search, optional publish notifications
   - Webhook URL for slash commands: `/api/slack/commands`
+- **SSO Integration (SAML 2.0 / OIDC)**: Enterprise single sign-on for team authentication
+  - Supports both OIDC (OAuth 2.0) and SAML 2.0 identity providers
+  - Works with Okta, Azure AD, OneLogin, Google Workspace, and other IdPs
+  - Features: auto-provision users, email domain restrictions, default role assignment
+  - SSO login URL: `/api/sso/login/:kbId`
+  - OIDC callback: `/api/sso/callback/oidc`
+  - SAML ACS/callback: `/api/sso/callback/saml` (POST)
+  - SP Metadata (SAML): `/api/sso/metadata/:kbId`
+  - Security: OIDC uses HMAC-signed state with 10-minute expiry; SAML validates certificate matching and time conditions
+  - Note: For production hardening, consider adding `xml-crypto` or `samlify` for cryptographic XML signature validation
+
+### Planned Integrations (Roadmap)
+- **Microsoft Teams**: Search articles and receive notifications in Teams channels
+- **Zendesk / Freshdesk**: Import/export articles to support platforms
+- **Public API**: Developer API with API key management
+- **Google Analytics**: Track public help center traffic
+- **AI-Powered Search**: Enhanced semantic search with LLM support
 
 ### Bug Fixes Applied
 - Logo upload: Fixed JSON response parsing and object path construction (`/objects/${param}`)

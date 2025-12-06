@@ -3,7 +3,7 @@ import { isAuthenticated } from "./replitAuth";
 import { storage } from "./storage";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
-import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema, insertTeamMemberSchema, serviceNowConfigSchema, slackConfigSchema } from "@shared/schema";
+import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema, insertTeamMemberSchema, serviceNowConfigSchema, slackConfigSchema, ssoConfigSchema, SSOConfig } from "@shared/schema";
 import { z } from "zod";
 import { emailService } from "./email";
 import { ServiceNowService, getServiceNowCredentials } from "./services/servicenow";
@@ -863,6 +863,8 @@ export function registerRoutes(app: Express) {
     const config = { ...integration.config } as Record<string, unknown>;
     delete config.accessToken;
     delete config.webhookUrl;
+    delete config.oidcClientSecret;
+    delete config.samlCertificate;
     return { ...integration, config };
   }
 
@@ -1432,6 +1434,336 @@ export function registerRoutes(app: Express) {
       } else {
         res.status(400).json({ message: "No channel configured for notifications" });
       }
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ============ SSO INTEGRATION ROUTES ============
+
+  // Get SSO configuration
+  app.get("/api/integrations/sso", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can view SSO settings" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'sso');
+      res.json(sanitizeIntegrationConfig(integration) || null);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Save/update SSO configuration
+  app.put("/api/integrations/sso", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can configure SSO" });
+      }
+
+      const { enabled, config } = req.body;
+      const ssoConfig = ssoConfigSchema.partial().parse(config || {});
+
+      let integration = await storage.getIntegrationByType(kbId, 'sso');
+
+      if (integration) {
+        const existingConfig = integration.config as Record<string, unknown>;
+        const mergedConfig = { ...existingConfig, ...ssoConfig };
+        
+        integration = await storage.updateIntegration(integration.id, {
+          enabled: enabled ?? integration.enabled,
+          config: mergedConfig,
+        });
+      } else {
+        integration = await storage.createIntegration({
+          knowledgeBaseId: kbId,
+          type: 'sso',
+          enabled: enabled ?? false,
+          config: ssoConfig,
+        });
+      }
+
+      res.json(sanitizeIntegrationConfig(integration));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Test SSO connection
+  app.post("/api/integrations/sso/test", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can test SSO" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'sso');
+      if (!integration) {
+        return res.status(404).json({ message: "SSO not configured" });
+      }
+
+      const config = integration.config as SSOConfig;
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const { createSSOService } = await import("./services/sso");
+      const service = createSSOService(config, `${baseUrl}/api/sso/callback`);
+
+      const result = await service.testConnection();
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Initiate SSO login flow
+  app.get("/api/sso/login/:kbId", async (req, res) => {
+    try {
+      const { kbId } = req.params;
+      const kb = await storage.getKnowledgeBaseById(kbId);
+      
+      if (!kb) {
+        return res.status(404).json({ message: "Knowledge base not found" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'sso');
+      if (!integration?.enabled) {
+        return res.status(400).json({ message: "SSO not enabled for this knowledge base" });
+      }
+
+      const config = integration.config as SSOConfig;
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const { createSSOService } = await import("./services/sso");
+      
+      if (config.provider === 'oidc') {
+        const service = createSSOService(config, `${baseUrl}/api/sso/callback/oidc`);
+        const authUrl = await service.getOIDCAuthUrl(kbId);
+        
+        if (!authUrl) {
+          return res.status(500).json({ message: "Failed to generate SSO login URL" });
+        }
+        
+        res.redirect(authUrl);
+      } else if (config.provider === 'saml') {
+        const service = createSSOService(config, `${baseUrl}/api/sso/callback/saml`);
+        const authUrl = service.getSAMLAuthUrl(kbId);
+        
+        if (!authUrl) {
+          return res.status(500).json({ message: "Failed to generate SAML login URL" });
+        }
+        
+        res.redirect(authUrl);
+      } else {
+        res.status(400).json({ message: "Invalid SSO provider configuration" });
+      }
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // OIDC callback handler
+  app.get("/api/sso/callback/oidc", async (req, res) => {
+    try {
+      const { code, state, error, error_description } = req.query;
+
+      if (error) {
+        return res.redirect(`/login?error=${encodeURIComponent(error_description as string || error as string)}`);
+      }
+
+      if (!code || !state) {
+        return res.redirect("/login?error=Invalid+SSO+response");
+      }
+
+      const { createSSOService } = await import("./services/sso");
+      const stateData = createSSOService({ provider: 'oidc' } as SSOConfig, "").parseState(state as string);
+      
+      if (!stateData) {
+        return res.redirect("/login?error=Invalid+state+parameter");
+      }
+
+      const integration = await storage.getIntegrationByType(stateData.kbId, 'sso');
+      if (!integration?.enabled) {
+        return res.redirect("/login?error=SSO+not+enabled");
+      }
+
+      const config = integration.config as SSOConfig;
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const service = createSSOService(config, `${baseUrl}/api/sso/callback/oidc`);
+
+      const tokens = await service.exchangeOIDCCode(code as string);
+      if (!tokens) {
+        return res.redirect("/login?error=Failed+to+authenticate");
+      }
+
+      const userInfo = await service.getOIDCUserInfo(tokens.access_token);
+      if (!userInfo || !userInfo.email) {
+        return res.redirect("/login?error=Failed+to+get+user+info");
+      }
+
+      if (!service.isEmailDomainAllowed(userInfo.email)) {
+        return res.redirect("/login?error=Email+domain+not+allowed");
+      }
+
+      let user = await storage.getUserByEmail(userInfo.email);
+      
+      if (!user && config.autoProvision) {
+        user = await storage.upsertUser({
+          email: userInfo.email,
+          firstName: userInfo.given_name || userInfo.name?.split(' ')[0],
+          lastName: userInfo.family_name || userInfo.name?.split(' ').slice(1).join(' '),
+          profileImageUrl: userInfo.picture,
+        });
+
+        if (user) {
+          await storage.createTeamMember({
+            knowledgeBaseId: stateData.kbId,
+            userId: user.id,
+            invitedEmail: userInfo.email,
+            role: config.defaultRole || 'viewer',
+            status: 'active',
+          });
+        }
+      }
+
+      if (!user) {
+        return res.redirect("/login?error=User+provisioning+failed");
+      }
+
+      if (req.session) {
+        (req.session as any).userId = user.id;
+        (req.session as any).email = user.email;
+      }
+
+      const kb = await storage.getKnowledgeBaseById(stateData.kbId);
+      res.redirect(kb ? `/kb/${kb.slug}` : '/');
+    } catch (error: any) {
+      console.error("OIDC callback error:", error);
+      res.redirect(`/login?error=${encodeURIComponent(error.message)}`);
+    }
+  });
+
+  // SAML callback handler (POST)
+  app.post("/api/sso/callback/saml", async (req, res) => {
+    try {
+      const { SAMLResponse, RelayState } = req.body;
+
+      if (!SAMLResponse || !RelayState) {
+        return res.redirect("/login?error=Invalid+SAML+response");
+      }
+
+      const { createSSOService } = await import("./services/sso");
+      const stateData = createSSOService({ provider: 'saml' } as SSOConfig, "").parseState(RelayState);
+      
+      if (!stateData) {
+        return res.redirect("/login?error=Invalid+relay+state");
+      }
+
+      const integration = await storage.getIntegrationByType(stateData.kbId, 'sso');
+      if (!integration?.enabled) {
+        return res.redirect("/login?error=SSO+not+enabled");
+      }
+
+      const config = integration.config as SSOConfig;
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const service = createSSOService(config, `${baseUrl}/api/sso/callback/saml`);
+
+      const signatureResult = service.verifySAMLSignature(SAMLResponse);
+      if (!signatureResult.valid) {
+        console.error("SAML signature verification failed:", signatureResult.error);
+        return res.redirect(`/login?error=${encodeURIComponent(signatureResult.error || "SAML+verification+failed")}`);
+      }
+
+      const assertion = service.parseSAMLResponse(SAMLResponse);
+      if (!assertion) {
+        return res.redirect("/login?error=Failed+to+parse+SAML+response");
+      }
+
+      const email = assertion.nameId;
+      if (!email || !email.includes('@')) {
+        return res.redirect("/login?error=Invalid+email+in+SAML+response");
+      }
+
+      if (!service.isEmailDomainAllowed(email)) {
+        return res.redirect("/login?error=Email+domain+not+allowed");
+      }
+
+      const firstName = (assertion.attributes['firstName'] || assertion.attributes['givenName'] || '') as string;
+      const lastName = (assertion.attributes['lastName'] || assertion.attributes['surname'] || '') as string;
+
+      let user = await storage.getUserByEmail(email);
+      
+      if (!user && config.autoProvision) {
+        user = await storage.upsertUser({
+          email,
+          firstName: firstName || email.split('@')[0],
+          lastName: lastName || '',
+        });
+
+        if (user) {
+          await storage.createTeamMember({
+            knowledgeBaseId: stateData.kbId,
+            userId: user.id,
+            invitedEmail: email,
+            role: config.defaultRole || 'viewer',
+            status: 'active',
+          });
+        }
+      }
+
+      if (!user) {
+        return res.redirect("/login?error=User+provisioning+failed");
+      }
+
+      if (req.session) {
+        (req.session as any).userId = user.id;
+        (req.session as any).email = user.email;
+      }
+
+      const kb = await storage.getKnowledgeBaseById(stateData.kbId);
+      res.redirect(kb ? `/kb/${kb.slug}` : '/');
+    } catch (error: any) {
+      console.error("SAML callback error:", error);
+      res.redirect(`/login?error=${encodeURIComponent(error.message)}`);
+    }
+  });
+
+  // Get SP metadata for SAML configuration
+  app.get("/api/sso/metadata/:kbId", async (req, res) => {
+    try {
+      const { kbId } = req.params;
+      const kb = await storage.getKnowledgeBaseById(kbId);
+      
+      if (!kb) {
+        return res.status(404).json({ message: "Knowledge base not found" });
+      }
+
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const { createSSOService } = await import("./services/sso");
+      const service = createSSOService({ provider: 'saml' } as SSOConfig, `${baseUrl}/api/sso/callback/saml`);
+      
+      const metadata = service.getServiceProviderMetadata(kbId, baseUrl);
+      
+      res.set('Content-Type', 'application/xml');
+      res.send(metadata);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

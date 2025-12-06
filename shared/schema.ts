@@ -320,3 +320,39 @@ export const slackConfigSchema = z.object({
 });
 
 export type SlackConfig = z.infer<typeof slackConfigSchema>;
+
+// SSO specific config type - supports SAML 2.0 and OIDC
+export const ssoConfigSchema = z.object({
+  // Provider type
+  provider: z.enum(['saml', 'oidc']).default('oidc'),
+  providerName: z.string().optional(), // Display name (e.g., "Okta", "Azure AD")
+  
+  // OIDC settings
+  oidcIssuerUrl: z.string().url().optional(), // OIDC discovery URL
+  oidcClientId: z.string().optional(),
+  oidcClientSecret: z.string().optional(), // Encrypted/masked in responses
+  
+  // SAML settings
+  samlEntryPoint: z.string().url().optional(), // IdP SSO URL
+  samlIssuer: z.string().optional(), // SP Entity ID
+  samlCertificate: z.string().optional(), // IdP X.509 certificate
+  
+  // General settings
+  enforceForTeam: z.boolean().default(false), // Require SSO for all team members
+  allowedDomains: z.array(z.string()).default([]), // Email domains allowed
+  autoProvision: z.boolean().default(true), // Auto-create users on first login
+  defaultRole: z.enum(['viewer', 'contributor', 'admin']).default('viewer'),
+});
+
+export type SSOConfig = z.infer<typeof ssoConfigSchema>;
+
+// Microsoft Teams specific config type (placeholder for future)
+export const teamsConfigSchema = z.object({
+  tenantId: z.string().optional(),
+  teamId: z.string().optional(),
+  channelId: z.string().optional(),
+  botEnabled: z.boolean().default(false),
+  notifyOnPublish: z.boolean().default(false),
+});
+
+export type TeamsConfig = z.infer<typeof teamsConfigSchema>;

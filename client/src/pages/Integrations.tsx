@@ -26,7 +26,10 @@ import {
   Loader2,
   Workflow,
   MessagesSquare,
-  Headphones
+  Headphones,
+  ShieldCheck,
+  Key,
+  Copy
 } from "lucide-react";
 import { z } from "zod";
 import type { Integration } from "@shared/schema";
@@ -38,6 +41,23 @@ const serviceNowFormSchema = z.object({
 });
 
 type ServiceNowFormValues = z.infer<typeof serviceNowFormSchema>;
+
+const ssoFormSchema = z.object({
+  provider: z.enum(["oidc", "saml"]),
+  providerName: z.string().optional(),
+  oidcIssuerUrl: z.string().url("Please enter a valid URL").or(z.literal("")).optional(),
+  oidcClientId: z.string().optional(),
+  oidcClientSecret: z.string().optional(),
+  samlEntryPoint: z.string().url("Please enter a valid URL").or(z.literal("")).optional(),
+  samlIssuer: z.string().optional(),
+  samlCertificate: z.string().optional(),
+  enforceForTeam: z.boolean(),
+  allowedDomains: z.string().optional(),
+  autoProvision: z.boolean(),
+  defaultRole: z.enum(["viewer", "contributor", "admin"]),
+});
+
+type SSOFormValues = z.infer<typeof ssoFormSchema>;
 
 export default function Integrations() {
   const { toast } = useToast();
@@ -61,6 +81,11 @@ export default function Integrations() {
   const slackIntegration = integrations?.find(i => i.type === "slack");
   const slackConfig = (slackIntegration?.config as Record<string, unknown>) || {};
   const [slackConnecting, setSlackConnecting] = useState(false);
+
+  const ssoIntegration = integrations?.find(i => i.type === "sso");
+  const ssoConfig = (ssoIntegration?.config as Record<string, unknown>) || {};
+  const [ssoTestStatus, setSsoTestStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [testingSso, setTestingSso] = useState(false);
 
   const form = useForm<ServiceNowFormValues>({
     resolver: zodResolver(serviceNowFormSchema),
@@ -215,6 +240,114 @@ export default function Integrations() {
     },
   });
 
+  const ssoForm = useForm<SSOFormValues>({
+    resolver: zodResolver(ssoFormSchema),
+    defaultValues: {
+      provider: (ssoConfig.provider as "oidc" | "saml") || "oidc",
+      providerName: (ssoConfig.providerName as string) || "",
+      oidcIssuerUrl: (ssoConfig.oidcIssuerUrl as string) || "",
+      oidcClientId: (ssoConfig.oidcClientId as string) || "",
+      oidcClientSecret: "",
+      samlEntryPoint: (ssoConfig.samlEntryPoint as string) || "",
+      samlIssuer: (ssoConfig.samlIssuer as string) || "",
+      samlCertificate: "",
+      enforceForTeam: (ssoConfig.enforceForTeam as boolean) || false,
+      allowedDomains: ((ssoConfig.allowedDomains as string[]) || []).join(", "),
+      autoProvision: (ssoConfig.autoProvision as boolean) ?? true,
+      defaultRole: (ssoConfig.defaultRole as "viewer" | "contributor" | "admin") || "viewer",
+    },
+  });
+
+  const ssoSaveMutation = useMutation({
+    mutationFn: async (data: SSOFormValues & { enabled: boolean }) => {
+      const config: Record<string, unknown> = {
+        provider: data.provider,
+        providerName: data.providerName,
+        enforceForTeam: data.enforceForTeam,
+        autoProvision: data.autoProvision,
+        defaultRole: data.defaultRole,
+        allowedDomains: data.allowedDomains ? data.allowedDomains.split(",").map(d => d.trim()).filter(Boolean) : [],
+      };
+
+      if (data.provider === "oidc") {
+        config.oidcIssuerUrl = data.oidcIssuerUrl;
+        config.oidcClientId = data.oidcClientId;
+        if (data.oidcClientSecret) {
+          config.oidcClientSecret = data.oidcClientSecret;
+        }
+      } else {
+        config.samlEntryPoint = data.samlEntryPoint;
+        config.samlIssuer = data.samlIssuer;
+        if (data.samlCertificate) {
+          config.samlCertificate = data.samlCertificate;
+        }
+      }
+
+      await apiRequest("PUT", getApiUrl("/api/integrations/sso"), {
+        enabled: data.enabled,
+        config,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations", selectedKnowledgeBase?.id] });
+      toast({
+        title: "Success",
+        description: "SSO configuration saved",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const testSsoConnection = async () => {
+    setTestingSso(true);
+    setSsoTestStatus(null);
+
+    try {
+      const res = await apiRequest("POST", getApiUrl("/api/integrations/sso/test"));
+      const result = await res.json();
+      setSsoTestStatus(result);
+    } catch (error: any) {
+      setSsoTestStatus({ success: false, message: error.message });
+    } finally {
+      setTestingSso(false);
+    }
+  };
+
+  const toggleSsoEnabled = (enabled: boolean) => {
+    const values = ssoForm.getValues();
+    ssoSaveMutation.mutate({ ...values, enabled });
+  };
+
+  const onSsoSubmit = (data: SSOFormValues) => {
+    ssoSaveMutation.mutate({ ...data, enabled: ssoIntegration?.enabled ?? false });
+  };
+
+  const copySsoLoginUrl = () => {
+    if (!selectedKnowledgeBase) return;
+    const url = `${window.location.origin}/api/sso/login/${selectedKnowledgeBase.id}`;
+    navigator.clipboard.writeText(url);
+    toast({
+      title: "Copied",
+      description: "SSO login URL copied to clipboard",
+    });
+  };
+
+  const copyMetadataUrl = () => {
+    if (!selectedKnowledgeBase) return;
+    const url = `${window.location.origin}/api/sso/metadata/${selectedKnowledgeBase.id}`;
+    navigator.clipboard.writeText(url);
+    toast({
+      title: "Copied",
+      description: "SP Metadata URL copied to clipboard",
+    });
+  };
+
   const testConnection = async () => {
     const instanceUrl = form.getValues("instanceUrl");
     if (!instanceUrl) {
@@ -270,7 +403,7 @@ export default function Integrations() {
       </div>
 
       <Tabs defaultValue="servicenow" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
+        <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-grid">
           <TabsTrigger value="servicenow" className="gap-2" data-testid="tab-servicenow">
             <Workflow className="w-4 h-4" />
             <span className="hidden sm:inline">ServiceNow</span>
@@ -278,6 +411,10 @@ export default function Integrations() {
           <TabsTrigger value="slack" className="gap-2" data-testid="tab-slack">
             <MessagesSquare className="w-4 h-4" />
             <span className="hidden sm:inline">Slack</span>
+          </TabsTrigger>
+          <TabsTrigger value="sso" className="gap-2" data-testid="tab-sso">
+            <ShieldCheck className="w-4 h-4" />
+            <span className="hidden sm:inline">SSO</span>
           </TabsTrigger>
           <TabsTrigger value="zendesk" className="gap-2" data-testid="tab-zendesk" disabled>
             <Headphones className="w-4 h-4" />
@@ -606,6 +743,379 @@ export default function Integrations() {
                   </div>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="sso" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-indigo-100 dark:bg-indigo-900/30">
+                    <ShieldCheck className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+                  </div>
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      Single Sign-On (SSO)
+                      {ssoIntegration?.enabled && (
+                        <Badge variant="secondary" className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400">
+                          Enabled
+                        </Badge>
+                      )}
+                    </CardTitle>
+                    <CardDescription>Configure enterprise authentication with SAML 2.0 or OIDC</CardDescription>
+                  </div>
+                </div>
+                <Switch
+                  checked={ssoIntegration?.enabled ?? false}
+                  onCheckedChange={toggleSsoEnabled}
+                  disabled={ssoSaveMutation.isPending}
+                  data-testid="switch-sso-enabled"
+                />
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Form {...ssoForm}>
+                <form onSubmit={ssoForm.handleSubmit(onSsoSubmit)} className="space-y-6">
+                  <FormField
+                    control={ssoForm.control}
+                    name="provider"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Provider Type</FormLabel>
+                        <FormControl>
+                          <div className="flex gap-4">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="radio"
+                                {...field}
+                                value="oidc"
+                                checked={field.value === "oidc"}
+                                onChange={() => field.onChange("oidc")}
+                                className="w-4 h-4"
+                              />
+                              <span>OIDC / OAuth 2.0</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="radio"
+                                {...field}
+                                value="saml"
+                                checked={field.value === "saml"}
+                                onChange={() => field.onChange("saml")}
+                                className="w-4 h-4"
+                              />
+                              <span>SAML 2.0</span>
+                            </label>
+                          </div>
+                        </FormControl>
+                        <FormDescription>
+                          Choose your identity provider protocol
+                        </FormDescription>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={ssoForm.control}
+                    name="providerName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Provider Name (optional)</FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            placeholder="e.g., Okta, Azure AD, OneLogin"
+                            data-testid="input-sso-provider-name"
+                          />
+                        </FormControl>
+                        <FormDescription>Display name shown on login button</FormDescription>
+                      </FormItem>
+                    )}
+                  />
+
+                  {ssoForm.watch("provider") === "oidc" ? (
+                    <>
+                      <FormField
+                        control={ssoForm.control}
+                        name="oidcIssuerUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Issuer URL</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                placeholder="https://your-provider.com/oauth2/default"
+                                data-testid="input-oidc-issuer"
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              The OIDC discovery URL (must have /.well-known/openid-configuration)
+                            </FormDescription>
+                          </FormItem>
+                        )}
+                      />
+
+                      <div className="grid sm:grid-cols-2 gap-4">
+                        <FormField
+                          control={ssoForm.control}
+                          name="oidcClientId"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Client ID</FormLabel>
+                              <FormControl>
+                                <Input
+                                  {...field}
+                                  placeholder="Your OIDC client ID"
+                                  data-testid="input-oidc-client-id"
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={ssoForm.control}
+                          name="oidcClientSecret"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Client Secret</FormLabel>
+                              <FormControl>
+                                <Input
+                                  {...field}
+                                  type="password"
+                                  placeholder={ssoIntegration ? "••••••••" : "Your client secret"}
+                                  data-testid="input-oidc-client-secret"
+                                />
+                              </FormControl>
+                              <FormDescription>Leave blank to keep existing secret</FormDescription>
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <FormField
+                        control={ssoForm.control}
+                        name="samlEntryPoint"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>IdP SSO URL</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                placeholder="https://your-idp.com/sso/saml"
+                                data-testid="input-saml-entry-point"
+                              />
+                            </FormControl>
+                            <FormDescription>Your identity provider's SAML SSO endpoint</FormDescription>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={ssoForm.control}
+                        name="samlIssuer"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>SP Entity ID / Issuer</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                placeholder={selectedKnowledgeBase ? `${window.location.origin}/api/sso/metadata/${selectedKnowledgeBase.id}` : ""}
+                                data-testid="input-saml-issuer"
+                              />
+                            </FormControl>
+                            <FormDescription>Service provider entity ID</FormDescription>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={ssoForm.control}
+                        name="samlCertificate"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>IdP X.509 Certificate</FormLabel>
+                            <FormControl>
+                              <textarea
+                                {...field}
+                                className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+                                data-testid="input-saml-certificate"
+                              />
+                            </FormControl>
+                            <FormDescription>Leave blank to keep existing certificate</FormDescription>
+                          </FormItem>
+                        )}
+                      />
+                    </>
+                  )}
+
+                  <div className="border-t pt-6 space-y-4">
+                    <h4 className="font-medium">User Provisioning</h4>
+                    
+                    <FormField
+                      control={ssoForm.control}
+                      name="allowedDomains"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Allowed Email Domains (optional)</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              placeholder="company.com, subsidiary.com"
+                              data-testid="input-sso-allowed-domains"
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            Comma-separated list of allowed email domains. Leave empty to allow all.
+                          </FormDescription>
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div className="flex items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <p className="text-base font-medium">Auto-provision Users</p>
+                          <p className="text-sm text-muted-foreground">
+                            Create accounts on first SSO login
+                          </p>
+                        </div>
+                        <Switch
+                          checked={ssoForm.watch("autoProvision")}
+                          onCheckedChange={(checked) => ssoForm.setValue("autoProvision", checked)}
+                          data-testid="switch-sso-auto-provision"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <p className="text-base font-medium">Enforce for Team</p>
+                          <p className="text-sm text-muted-foreground">
+                            Require SSO for all team members
+                          </p>
+                        </div>
+                        <Switch
+                          checked={ssoForm.watch("enforceForTeam")}
+                          onCheckedChange={(checked) => ssoForm.setValue("enforceForTeam", checked)}
+                          data-testid="switch-sso-enforce"
+                        />
+                      </div>
+                    </div>
+
+                    <FormField
+                      control={ssoForm.control}
+                      name="defaultRole"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Default Role for New Users</FormLabel>
+                          <FormControl>
+                            <select
+                              {...field}
+                              className="flex h-9 w-full max-w-[200px] rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                              data-testid="select-sso-default-role"
+                            >
+                              <option value="viewer">Viewer</option>
+                              <option value="contributor">Contributor</option>
+                              <option value="admin">Admin</option>
+                            </select>
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  {ssoTestStatus && (
+                    <Alert variant={ssoTestStatus.success ? "default" : "destructive"}>
+                      {ssoTestStatus.success ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : (
+                        <XCircle className="h-4 w-4" />
+                      )}
+                      <AlertTitle>{ssoTestStatus.success ? "Connection Successful" : "Connection Failed"}</AlertTitle>
+                      <AlertDescription>{ssoTestStatus.message}</AlertDescription>
+                    </Alert>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="submit"
+                      disabled={ssoSaveMutation.isPending}
+                      data-testid="button-save-sso"
+                    >
+                      {ssoSaveMutation.isPending ? "Saving..." : "Save Configuration"}
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={testSsoConnection}
+                      disabled={testingSso || !ssoIntegration}
+                      data-testid="button-test-sso"
+                    >
+                      {testingSso ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Testing...
+                        </>
+                      ) : (
+                        "Test Connection"
+                      )}
+                    </Button>
+                  </div>
+
+                  {ssoIntegration?.enabled && (
+                    <div className="border-t pt-6 space-y-4">
+                      <h4 className="font-medium">Integration URLs</h4>
+                      
+                      <div className="p-4 rounded-lg bg-muted space-y-4">
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="text-sm font-medium">SSO Login URL</p>
+                            <Button variant="ghost" size="sm" onClick={copySsoLoginUrl}>
+                              <Copy className="w-4 h-4" />
+                            </Button>
+                          </div>
+                          <code className="text-xs bg-background p-2 rounded block break-all">
+                            {window.location.origin}/api/sso/login/{selectedKnowledgeBase?.id}
+                          </code>
+                        </div>
+
+                        {ssoForm.watch("provider") === "saml" && (
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <p className="text-sm font-medium">SP Metadata URL</p>
+                              <Button variant="ghost" size="sm" onClick={copyMetadataUrl}>
+                                <Copy className="w-4 h-4" />
+                              </Button>
+                            </div>
+                            <code className="text-xs bg-background p-2 rounded block break-all">
+                              {window.location.origin}/api/sso/metadata/{selectedKnowledgeBase?.id}
+                            </code>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Use this URL to configure your IdP
+                            </p>
+                          </div>
+                        )}
+
+                        <div>
+                          <p className="text-sm font-medium mb-1">Callback URL</p>
+                          <code className="text-xs bg-background p-2 rounded block break-all">
+                            {window.location.origin}/api/sso/callback/{ssoForm.watch("provider")}
+                          </code>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Configure this as your redirect/ACS URL in your IdP
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </form>
+              </Form>
             </CardContent>
           </Card>
         </TabsContent>
