@@ -44,9 +44,16 @@ Preferred communication style: Simple, everyday language.
   - SP Metadata (SAML): `/api/sso/metadata/:kbId`
   - Security: OIDC uses HMAC-signed state with 10-minute expiry; SAML validates certificate matching and time conditions
   - Note: For production hardening, consider adding `xml-crypto` or `samlify` for cryptographic XML signature validation
+- **Microsoft Teams Integration**: Search articles and receive notifications in Teams channels
+  - Requires TEAMS_CLIENT_ID, TEAMS_CLIENT_SECRET, TEAMS_TENANT_ID secrets (Azure AD app registration)
+  - OAuth flow connects Microsoft Teams workspace to knowledge base
+  - Features: search articles from Teams, publish notifications to channels
+  - Alternative: Use incoming webhook URL for simple notification-only setups
+  - OAuth callback: `/api/integrations/teams/oauth/callback`
+  - Bot webhook: `/api/integrations/teams/bot` (for Teams bot messaging)
+  - Security: HMAC-signed OAuth state with 10-minute expiry
 
 ### Planned Integrations (Roadmap)
-- **Microsoft Teams**: Search articles and receive notifications in Teams channels
 - **Zendesk / Freshdesk**: Import/export articles to support platforms
 - **Public API**: Developer API with API key management
 - **Google Analytics**: Track public help center traffic

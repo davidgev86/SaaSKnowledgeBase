@@ -191,6 +191,59 @@ export function registerRoutes(app: Express) {
       });
       
       const article = await storage.updateArticle(req.params.id, req.body);
+
+      // Send publish notifications if article was just made public
+      const wasJustPublished = !existing.isPublic && article.isPublic;
+      if (wasJustPublished) {
+        const kb = await storage.getKnowledgeBaseById(article.knowledgeBaseId);
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        const publicUrl = kb?.slug ? `${baseUrl}/kb/${kb.slug}/articles/${article.id}` : null;
+        
+        // Notify Slack if configured
+        try {
+          const slackIntegration = await storage.getIntegrationByType(article.knowledgeBaseId, 'slack');
+          if (slackIntegration?.enabled) {
+            const slackConfig = slackIntegration.config as Record<string, unknown>;
+            if (slackConfig.notifyOnPublish && slackConfig.accessToken && slackConfig.channelId) {
+              const { SlackService } = await import("./services/slack");
+              const slackService = new SlackService(slackConfig.accessToken as string);
+              await slackService.sendMessage(
+                slackConfig.channelId as string,
+                `A new article has been published: *${article.title}*${publicUrl ? `\n<${publicUrl}|View article>` : ''}`
+              );
+              console.log("[Slack notify] Published article notification sent");
+            }
+          }
+        } catch (slackErr: any) {
+          console.error("[Slack notify] Failed to send publish notification:", slackErr.message);
+        }
+
+        // Notify Teams if configured
+        try {
+          const teamsIntegration = await storage.getIntegrationByType(article.knowledgeBaseId, 'teams');
+          if (teamsIntegration?.enabled) {
+            const teamsConfig = teamsIntegration.config as TeamsConfig;
+            if (teamsConfig.notifyOnPublish && kb) {
+              const { getTeamsCredentials, TeamsService } = await import("./services/teams");
+              const credentials = getTeamsCredentials();
+              if (credentials && (teamsConfig.channelId || teamsConfig.webhookUrl)) {
+                const teamsService = new TeamsService(credentials, teamsConfig);
+                const richCard = teamsService.formatArticlePublishedCard(article, kb, baseUrl);
+                
+                if (teamsConfig.webhookUrl) {
+                  await teamsService.postToWebhook(teamsConfig.webhookUrl, richCard);
+                } else if (teamsConfig.teamId && teamsConfig.channelId) {
+                  await teamsService.sendChannelMessage(teamsConfig.teamId, teamsConfig.channelId, richCard);
+                }
+                console.log("[Teams notify] Published article notification sent");
+              }
+            }
+          }
+        } catch (teamsErr: any) {
+          console.error("[Teams notify] Failed to send publish notification:", teamsErr.message);
+        }
+      }
+
       res.json(article);
     } catch (error: any) {
       res.status(400).json({ message: error.message });

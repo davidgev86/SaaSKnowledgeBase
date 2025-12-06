@@ -363,6 +363,52 @@ export class TeamsService {
     }
   }
 
+  async sendPublishNotification(
+    articleTitle: string,
+    articleUrl?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const card: AdaptiveCard = {
+      type: "AdaptiveCard",
+      version: "1.4",
+      $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+      body: [
+        {
+          type: "TextBlock",
+          text: "New Article Published",
+          wrap: true,
+          weight: "Bolder",
+          size: "Large",
+        },
+        {
+          type: "TextBlock",
+          text: articleTitle,
+          wrap: true,
+          weight: "Bolder",
+          size: "Medium",
+        },
+      ],
+      actions: articleUrl
+        ? [
+            {
+              type: "Action.OpenUrl",
+              title: "View Article",
+              url: articleUrl,
+            },
+          ]
+        : undefined,
+    };
+
+    if (this.config.webhookUrl) {
+      return this.postToWebhook(this.config.webhookUrl, card);
+    }
+
+    if (this.config.teamId && this.config.channelId) {
+      return this.sendChannelMessage(this.config.teamId, this.config.channelId, card);
+    }
+
+    return { success: false, error: "No channel or webhook configured" };
+  }
+
   verifyBotRequest(
     authHeader: string | undefined,
     activity: TeamsBotActivity
