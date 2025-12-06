@@ -87,6 +87,12 @@ export default function Integrations() {
   const [ssoTestStatus, setSsoTestStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [testingSso, setTestingSso] = useState(false);
 
+  const teamsIntegration = integrations?.find(i => i.type === "teams");
+  const teamsConfig = (teamsIntegration?.config as Record<string, unknown>) || {};
+  const [teamsConnecting, setTeamsConnecting] = useState(false);
+  const [selectedTeamId, setSelectedTeamId] = useState<string>((teamsConfig.teamId as string) || "");
+  const [selectedChannelId, setSelectedChannelId] = useState<string>((teamsConfig.channelId as string) || "");
+
   const form = useForm<ServiceNowFormValues>({
     resolver: zodResolver(serviceNowFormSchema),
     defaultValues: {
@@ -348,6 +354,112 @@ export default function Integrations() {
     });
   };
 
+  const connectTeams = async () => {
+    setTeamsConnecting(true);
+    try {
+      const res = await fetch(getApiUrl("/api/integrations/teams/oauth/url"), { credentials: "include" });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        toast({
+          title: "Error",
+          description: data.message || "Failed to get Teams authorization URL",
+          variant: "destructive",
+        });
+        setTeamsConnecting(false);
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+      setTeamsConnecting(false);
+    }
+  };
+
+  const teamsDisconnectMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", getApiUrl("/api/integrations/teams/disconnect"));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations", selectedKnowledgeBase?.id] });
+      toast({
+        title: "Disconnected",
+        description: "Microsoft Teams disconnected",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const teamsConfigMutation = useMutation({
+    mutationFn: async (config: Record<string, unknown>) => {
+      await apiRequest("PUT", getApiUrl("/api/integrations/teams/config"), config);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations", selectedKnowledgeBase?.id] });
+      toast({
+        title: "Success",
+        description: "Teams settings updated",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const teamsTestMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", getApiUrl("/api/integrations/teams/test"));
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: data.success ? "Success" : "Failed",
+        description: data.message,
+        variant: data.success ? "default" : "destructive",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const { data: teamsTeams, isLoading: teamsTeamsLoading } = useQuery<Array<{ id: string; displayName: string }>>({
+    queryKey: ["/api/integrations/teams/teams", selectedKnowledgeBase?.id],
+    queryFn: async () => {
+      const res = await fetch(getApiUrl("/api/integrations/teams/teams"), { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!teamsIntegration?.enabled,
+  });
+
+  const { data: teamsChannels, isLoading: teamsChannelsLoading } = useQuery<Array<{ id: string; displayName: string }>>({
+    queryKey: ["/api/integrations/teams/channels", selectedKnowledgeBase?.id, selectedTeamId],
+    queryFn: async () => {
+      const res = await fetch(getApiUrl(`/api/integrations/teams/channels`) + `&teamId=${selectedTeamId}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!teamsIntegration?.enabled && !!selectedTeamId,
+  });
+
   const testConnection = async () => {
     const instanceUrl = form.getValues("instanceUrl");
     if (!instanceUrl) {
@@ -403,7 +515,7 @@ export default function Integrations() {
       </div>
 
       <Tabs defaultValue="servicenow" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-grid">
+        <TabsList className="grid w-full grid-cols-6 lg:w-auto lg:inline-grid">
           <TabsTrigger value="servicenow" className="gap-2" data-testid="tab-servicenow">
             <Workflow className="w-4 h-4" />
             <span className="hidden sm:inline">ServiceNow</span>
@@ -411,6 +523,10 @@ export default function Integrations() {
           <TabsTrigger value="slack" className="gap-2" data-testid="tab-slack">
             <MessagesSquare className="w-4 h-4" />
             <span className="hidden sm:inline">Slack</span>
+          </TabsTrigger>
+          <TabsTrigger value="teams" className="gap-2" data-testid="tab-teams">
+            <MessageSquare className="w-4 h-4" />
+            <span className="hidden sm:inline">Teams</span>
           </TabsTrigger>
           <TabsTrigger value="sso" className="gap-2" data-testid="tab-sso">
             <ShieldCheck className="w-4 h-4" />
@@ -743,6 +859,216 @@ export default function Integrations() {
                   </div>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="teams" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
+                    <MessageSquare className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      Microsoft Teams
+                      {teamsIntegration?.enabled && (
+                        <Badge variant="secondary" className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                          Connected
+                        </Badge>
+                      )}
+                    </CardTitle>
+                    <CardDescription>Search articles and receive notifications in Teams</CardDescription>
+                  </div>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Azure AD App Required</AlertTitle>
+                <AlertDescription>
+                  To use this integration, register an Azure AD application and add TEAMS_CLIENT_ID, TEAMS_CLIENT_SECRET, and TEAMS_TENANT_ID to your secrets.
+                  You can also use an incoming webhook URL for simpler notification-only setups.
+                </AlertDescription>
+              </Alert>
+
+              {!teamsIntegration?.enabled ? (
+                <div className="flex flex-col items-center justify-center py-8 space-y-4">
+                  <MessageSquare className="w-12 h-12 text-muted-foreground" />
+                  <p className="text-muted-foreground text-center max-w-md">
+                    Connect your Microsoft Teams workspace to enable article search and notifications
+                  </p>
+                  <Button
+                    onClick={connectTeams}
+                    disabled={teamsConnecting}
+                    data-testid="button-connect-teams"
+                  >
+                    {teamsConnecting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Connecting...
+                      </>
+                    ) : (
+                      "Connect Teams"
+                    )}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">Or use a webhook URL below for notifications only</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="p-4 rounded-lg border bg-card">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div>
+                        <p className="font-medium">{(teamsConfig.teamName as string) || "Connected Account"}</p>
+                        {typeof teamsConfig.channelName === "string" && teamsConfig.channelName && (
+                          <p className="text-sm text-muted-foreground">
+                            Channel: {teamsConfig.channelName}
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => teamsDisconnectMutation.mutate()}
+                        disabled={teamsDisconnectMutation.isPending}
+                        data-testid="button-disconnect-teams"
+                      >
+                        Disconnect
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4">
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">Select Team</label>
+                      <select
+                        className="w-full p-2 rounded-md border bg-background"
+                        value={selectedTeamId}
+                        onChange={(e) => {
+                          setSelectedTeamId(e.target.value);
+                          setSelectedChannelId("");
+                          const team = teamsTeams?.find(t => t.id === e.target.value);
+                          if (team) {
+                            teamsConfigMutation.mutate({ 
+                              teamId: e.target.value, 
+                              teamName: team.displayName 
+                            });
+                          }
+                        }}
+                        disabled={teamsTeamsLoading}
+                        data-testid="select-teams-team"
+                      >
+                        <option value="">Select a team...</option>
+                        {teamsTeams?.map(team => (
+                          <option key={team.id} value={team.id}>{team.displayName}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {selectedTeamId && (
+                      <div>
+                        <label className="text-sm font-medium mb-2 block">Select Channel</label>
+                        <select
+                          className="w-full p-2 rounded-md border bg-background"
+                          value={selectedChannelId}
+                          onChange={(e) => {
+                            setSelectedChannelId(e.target.value);
+                            const channel = teamsChannels?.find(c => c.id === e.target.value);
+                            if (channel) {
+                              teamsConfigMutation.mutate({ 
+                                channelId: e.target.value, 
+                                channelName: channel.displayName 
+                              });
+                            }
+                          }}
+                          disabled={teamsChannelsLoading}
+                          data-testid="select-teams-channel"
+                        >
+                          <option value="">Select a channel...</option>
+                          {teamsChannels?.map(channel => (
+                            <option key={channel.id} value={channel.id}>{channel.displayName}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="flex items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-0.5">
+                        <p className="text-base font-medium">Search Command</p>
+                        <p className="text-sm text-muted-foreground">
+                          Enable article search in Teams
+                        </p>
+                      </div>
+                      <Switch
+                        checked={(teamsConfig.searchEnabled as boolean) ?? false}
+                        onCheckedChange={(checked) => 
+                          teamsConfigMutation.mutate({ searchEnabled: checked })
+                        }
+                        disabled={teamsConfigMutation.isPending}
+                        data-testid="switch-teams-search"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-0.5">
+                        <p className="text-base font-medium">Publish Notifications</p>
+                        <p className="text-sm text-muted-foreground">
+                          Post when articles are published
+                        </p>
+                      </div>
+                      <Switch
+                        checked={(teamsConfig.notifyOnPublish as boolean) ?? false}
+                        onCheckedChange={(checked) => 
+                          teamsConfigMutation.mutate({ notifyOnPublish: checked })
+                        }
+                        disabled={teamsConfigMutation.isPending}
+                        data-testid="switch-teams-notify-publish"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => teamsTestMutation.mutate()}
+                      disabled={teamsTestMutation.isPending || (!teamsConfig.channelId && !teamsConfig.webhookUrl)}
+                      data-testid="button-test-teams"
+                    >
+                      {teamsTestMutation.isPending ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Testing...
+                        </>
+                      ) : (
+                        "Send Test Message"
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <div className="border-t pt-6">
+                <p className="text-sm font-medium mb-3">Alternative: Use Incoming Webhook</p>
+                <p className="text-sm text-muted-foreground mb-3">
+                  For simple notification setups, paste an incoming webhook URL from Teams:
+                </p>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="https://outlook.webhook.office.com/..."
+                    value={(teamsConfig.webhookUrl as string) || ""}
+                    onChange={(e) => teamsConfigMutation.mutate({ webhookUrl: e.target.value })}
+                    data-testid="input-teams-webhook"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Create an incoming webhook in Teams: Channel Settings → Connectors → Incoming Webhook
+                </p>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
