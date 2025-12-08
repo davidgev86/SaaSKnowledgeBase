@@ -3,7 +3,7 @@ import { isAuthenticated } from "./replitAuth";
 import { storage } from "./storage";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
-import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema, insertTeamMemberSchema, serviceNowConfigSchema, slackConfigSchema, ssoConfigSchema, SSOConfig, TeamsConfig } from "@shared/schema";
+import { insertKnowledgeBaseSchema, insertArticleSchema, insertCategorySchema, insertTeamMemberSchema, serviceNowConfigSchema, slackConfigSchema, ssoConfigSchema, SSOConfig, TeamsConfig, HelpdeskConfig } from "@shared/schema";
 import { z } from "zod";
 import { emailService } from "./email";
 import { ServiceNowService, getServiceNowCredentials } from "./services/servicenow";
@@ -918,6 +918,14 @@ export function registerRoutes(app: Express) {
     delete config.webhookUrl;
     delete config.oidcClientSecret;
     delete config.samlCertificate;
+    return { ...integration, config };
+  }
+
+  function sanitizeHelpdeskConfig(integration: any) {
+    if (!integration) return integration;
+    const config = { ...integration.config } as Record<string, unknown>;
+    delete config.apiToken;
+    delete config.apiKey;
     return { ...integration, config };
   }
 
@@ -2188,6 +2196,368 @@ export function registerRoutes(app: Express) {
       
       res.set('Content-Type', 'application/xml');
       res.send(metadata);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ============ HELPDESK (ZENDESK/FRESHDESK) INTEGRATION ROUTES ============
+
+  // Get helpdesk integration config
+  app.get("/api/integrations/helpdesk", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can view helpdesk settings" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'helpdesk');
+      res.json(sanitizeHelpdeskConfig(integration) || null);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Save/update helpdesk configuration
+  app.put("/api/integrations/helpdesk", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can configure helpdesk" });
+      }
+
+      const { enabled, config } = req.body;
+      const { helpdeskConfigSchema } = await import("@shared/schema");
+      const helpdeskConfig = helpdeskConfigSchema.partial().parse(config || {});
+
+      let integration = await storage.getIntegrationByType(kbId, 'helpdesk');
+
+      if (integration) {
+        const existingConfig = integration.config as Record<string, unknown>;
+        const mergedConfig = { ...existingConfig, ...helpdeskConfig };
+        
+        integration = await storage.updateIntegration(integration.id, {
+          enabled: enabled ?? integration.enabled,
+          config: mergedConfig,
+        });
+      } else {
+        integration = await storage.createIntegration({
+          knowledgeBaseId: kbId,
+          type: 'helpdesk',
+          enabled: enabled ?? false,
+          config: helpdeskConfig,
+        });
+      }
+
+      res.json(sanitizeHelpdeskConfig(integration));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Test helpdesk connection
+  app.post("/api/integrations/helpdesk/test", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can test helpdesk" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'helpdesk');
+      if (!integration) {
+        return res.status(400).json({ success: false, message: "Helpdesk not configured" });
+      }
+
+      const config = integration.config as HelpdeskConfig;
+      const { helpdeskService } = await import("./services/helpdesk");
+      const result = await helpdeskService.testConnection(config);
+      
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // Disconnect helpdesk integration
+  app.post("/api/integrations/helpdesk/disconnect", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can disconnect helpdesk" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'helpdesk');
+      if (integration) {
+        await storage.deleteIntegration(integration.id);
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // List remote categories/sections from helpdesk
+  app.get("/api/integrations/helpdesk/remote-categories", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can view remote categories" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'helpdesk');
+      if (!integration) {
+        return res.status(400).json({ message: "Helpdesk not configured" });
+      }
+
+      const config = integration.config as HelpdeskConfig;
+      const { helpdeskService } = await import("./services/helpdesk");
+
+      if (config.provider === 'zendesk') {
+        const categories = await helpdeskService.listZendeskCategories(config);
+        const sections = await helpdeskService.listZendeskSections(config);
+        res.json({ categories, sections });
+      } else {
+        const categories = await helpdeskService.listFreshdeskCategories(config);
+        const folders: any[] = [];
+        for (const cat of categories) {
+          const catFolders = await helpdeskService.listFreshdeskFolders(config, cat.id);
+          folders.push(...catFolders.map(f => ({ ...f, categoryName: cat.name })));
+        }
+        res.json({ categories, folders });
+      }
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Trigger import from helpdesk
+  app.post("/api/integrations/helpdesk/import", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can import articles" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'helpdesk');
+      if (!integration) {
+        return res.status(400).json({ message: "Helpdesk not configured" });
+      }
+
+      const config = integration.config as HelpdeskConfig;
+
+      const job = await storage.createSyncJob({
+        knowledgeBaseId: kbId,
+        provider: config.provider || 'zendesk',
+        direction: 'import',
+        status: 'pending',
+      });
+
+      const { helpdeskService } = await import("./services/helpdesk");
+      
+      if (config.provider === 'freshdesk') {
+        helpdeskService.importFromFreshdesk(kbId, config, job.id).catch(console.error);
+      } else {
+        helpdeskService.importFromZendesk(kbId, config, job.id).catch(console.error);
+      }
+
+      res.json({ success: true, jobId: job.id });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Trigger export to helpdesk
+  app.post("/api/integrations/helpdesk/export", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can export articles" });
+      }
+
+      const integration = await storage.getIntegrationByType(kbId, 'helpdesk');
+      if (!integration) {
+        return res.status(400).json({ message: "Helpdesk not configured" });
+      }
+
+      const config = integration.config as HelpdeskConfig;
+      const { articleIds } = req.body;
+
+      const job = await storage.createSyncJob({
+        knowledgeBaseId: kbId,
+        provider: config.provider || 'zendesk',
+        direction: 'export',
+        status: 'pending',
+      });
+
+      const { helpdeskService } = await import("./services/helpdesk");
+      
+      if (config.provider === 'freshdesk') {
+        helpdeskService.exportToFreshdesk(kbId, config, job.id, articleIds).catch(console.error);
+      } else {
+        helpdeskService.exportToZendesk(kbId, config, job.id, articleIds).catch(console.error);
+      }
+
+      res.json({ success: true, jobId: job.id });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Get sync job history
+  app.get("/api/integrations/helpdesk/sync-jobs", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can view sync history" });
+      }
+
+      const jobs = await storage.getSyncJobsByKnowledgeBaseId(kbId, 20);
+      res.json(jobs);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Get single sync job status
+  app.get("/api/integrations/helpdesk/sync-jobs/:jobId", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can view sync status" });
+      }
+
+      const job = await storage.getSyncJobById(req.params.jobId);
+      if (!job || job.knowledgeBaseId !== kbId) {
+        return res.status(404).json({ message: "Sync job not found" });
+      }
+
+      res.json(job);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Get external article mappings
+  app.get("/api/integrations/helpdesk/mappings", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can view mappings" });
+      }
+
+      const mappings = await storage.getExternalMappingsByKnowledgeBaseId(kbId);
+      res.json(mappings);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Get conflicts
+  app.get("/api/integrations/helpdesk/conflicts", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can view conflicts" });
+      }
+
+      const conflicts = await storage.getConflictedMappings(kbId);
+      res.json(conflicts);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Resolve conflict
+  app.post("/api/integrations/helpdesk/conflicts/:mappingId/resolve", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can resolve conflicts" });
+      }
+
+      const { resolution } = req.body;
+      if (!['keep_local', 'keep_remote'].includes(resolution)) {
+        return res.status(400).json({ message: "Invalid resolution. Use 'keep_local' or 'keep_remote'" });
+      }
+
+      await storage.updateExternalMapping(req.params.mappingId, {
+        hasConflict: false,
+      });
+
+      res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

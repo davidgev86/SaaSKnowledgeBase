@@ -52,9 +52,18 @@ Preferred communication style: Simple, everyday language.
   - OAuth callback: `/api/integrations/teams/oauth/callback`
   - Bot webhook: `/api/integrations/teams/bot` (for Teams bot messaging)
   - Security: HMAC-signed OAuth state with 10-minute expiry
+- **Zendesk / Freshdesk Integration**: Bi-directional article sync with support platforms
+  - Supports both Zendesk Guide (Help Center) and Freshdesk Solutions
+  - API key authentication: Zendesk uses email + API token, Freshdesk uses email + API key
+  - Import: Pull articles from helpdesk into KB with category mapping
+  - Export: Push KB articles to helpdesk sections/folders
+  - Rate limiting: Zendesk 700 req/min, Freshdesk 80 req/min with queue-based throttling
+  - Sync tracking: external_article_mappings table tracks synced articles with external IDs
+  - Job history: sync_jobs table logs import/export operations with status and counts
+  - Conflict detection: Flags articles modified in both systems since last sync
+  - Routes: GET/PUT `/api/integrations/helpdesk`, POST `/api/integrations/helpdesk/import`, POST `/api/integrations/helpdesk/export`
 
 ### Planned Integrations (Roadmap)
-- **Zendesk / Freshdesk**: Import/export articles to support platforms
 - **Public API**: Developer API with API key management
 - **Google Analytics**: Track public help center traffic
 - **AI-Powered Search**: Enhanced semantic search with LLM support

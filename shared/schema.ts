@@ -377,3 +377,105 @@ export const teamsConfigSchema = z.object({
 });
 
 export type TeamsConfig = z.infer<typeof teamsConfigSchema>;
+
+// Helpdesk (Zendesk/Freshdesk) specific config type
+export const helpdeskConfigSchema = z.object({
+  // Provider type
+  provider: z.enum(['zendesk', 'freshdesk']).default('zendesk'),
+  
+  // Connection settings
+  subdomain: z.string().optional(), // e.g., "mycompany" for mycompany.zendesk.com
+  email: z.string().email().optional(), // Admin email for API auth
+  apiToken: z.string().optional(), // Encrypted in responses
+  
+  // Freshdesk-specific
+  apiKey: z.string().optional(), // Freshdesk uses API key instead of token
+  
+  // Mapping settings
+  defaultSectionId: z.string().optional(), // Zendesk section to sync to
+  defaultFolderId: z.string().optional(), // Freshdesk folder to sync to
+  categoryMappings: z.array(z.object({
+    localCategoryId: z.string(),
+    externalSectionId: z.string(),
+    externalSectionName: z.string().optional(),
+  })).default([]),
+  
+  // Sync settings
+  syncDirection: z.enum(['import', 'export', 'both']).default('both'),
+  autoSync: z.boolean().default(false),
+  lastImportAt: z.string().optional(),
+  lastExportAt: z.string().optional(),
+});
+
+export type HelpdeskConfig = z.infer<typeof helpdeskConfigSchema>;
+
+// External Article Mappings table - Track synced articles between local and external systems
+export const externalArticleMappings = pgTable("external_article_mappings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  knowledgeBaseId: varchar("knowledge_base_id").notNull().references(() => knowledgeBases.id, { onDelete: "cascade" }),
+  localArticleId: varchar("local_article_id").references(() => articles.id, { onDelete: "cascade" }),
+  provider: varchar("provider").notNull(), // zendesk, freshdesk
+  externalId: varchar("external_id").notNull(), // Article ID in external system
+  externalUrl: varchar("external_url"), // Direct link to article in external system
+  syncDirection: varchar("sync_direction").notNull(), // imported, exported
+  localUpdatedAt: timestamp("local_updated_at"),
+  externalUpdatedAt: timestamp("external_updated_at"),
+  contentHash: varchar("content_hash"), // Hash of content for change detection
+  hasConflict: boolean("has_conflict").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const externalArticleMappingsRelations = relations(externalArticleMappings, ({ one }) => ({
+  knowledgeBase: one(knowledgeBases, {
+    fields: [externalArticleMappings.knowledgeBaseId],
+    references: [knowledgeBases.id],
+  }),
+  article: one(articles, {
+    fields: [externalArticleMappings.localArticleId],
+    references: [articles.id],
+  }),
+}));
+
+export const insertExternalArticleMappingSchema = createInsertSchema(externalArticleMappings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertExternalArticleMapping = z.infer<typeof insertExternalArticleMappingSchema>;
+export type ExternalArticleMapping = typeof externalArticleMappings.$inferSelect;
+
+// Sync Jobs table - Track sync history and status
+export const syncJobs = pgTable("sync_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  knowledgeBaseId: varchar("knowledge_base_id").notNull().references(() => knowledgeBases.id, { onDelete: "cascade" }),
+  provider: varchar("provider").notNull(), // zendesk, freshdesk, servicenow
+  direction: varchar("direction").notNull(), // import, export
+  status: varchar("status").notNull().default("pending"), // pending, running, completed, failed
+  totalItems: integer("total_items").default(0),
+  processedItems: integer("processed_items").default(0),
+  createdItems: integer("created_items").default(0),
+  updatedItems: integer("updated_items").default(0),
+  skippedItems: integer("skipped_items").default(0),
+  failedItems: integer("failed_items").default(0),
+  errorLog: jsonb("error_log").$type<Array<{ articleId?: string; error: string; timestamp: string }>>().default([]),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const syncJobsRelations = relations(syncJobs, ({ one }) => ({
+  knowledgeBase: one(knowledgeBases, {
+    fields: [syncJobs.knowledgeBaseId],
+    references: [knowledgeBases.id],
+  }),
+}));
+
+export const insertSyncJobSchema = createInsertSchema(syncJobs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertSyncJob = z.infer<typeof insertSyncJobSchema>;
+export type SyncJob = typeof syncJobs.$inferSelect;

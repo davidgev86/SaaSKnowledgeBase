@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -93,6 +93,42 @@ export default function Integrations() {
   const [selectedTeamId, setSelectedTeamId] = useState<string>((teamsConfig.teamId as string) || "");
   const [selectedChannelId, setSelectedChannelId] = useState<string>((teamsConfig.channelId as string) || "");
   const [teamsWebhookUrl, setTeamsWebhookUrl] = useState<string>((teamsConfig.webhookUrl as string) || "");
+
+  const helpdeskIntegration = integrations?.find(i => i.type === "helpdesk");
+  const helpdeskConfig = (helpdeskIntegration?.config as Record<string, unknown>) || {};
+  const [helpdeskTestStatus, setHelpdeskTestStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [testingHelpdesk, setTestingHelpdesk] = useState(false);
+  const [helpdeskProvider, setHelpdeskProvider] = useState<'zendesk' | 'freshdesk'>('zendesk');
+  const [helpdeskSubdomain, setHelpdeskSubdomain] = useState<string>("");
+  const [helpdeskEmail, setHelpdeskEmail] = useState<string>("");
+  const [helpdeskApiToken, setHelpdeskApiToken] = useState<string>("");
+  const [helpdeskApiKey, setHelpdeskApiKey] = useState<string>("");
+  const [helpdeskDefaultSection, setHelpdeskDefaultSection] = useState<string>("");
+  const [helpdeskConfigLoaded, setHelpdeskConfigLoaded] = useState(false);
+
+  useEffect(() => {
+    if (helpdeskIntegration && !helpdeskConfigLoaded) {
+      const config = (helpdeskIntegration.config as Record<string, unknown>) || {};
+      setHelpdeskProvider((config.provider as 'zendesk' | 'freshdesk') || 'zendesk');
+      setHelpdeskSubdomain((config.subdomain as string) || "");
+      setHelpdeskEmail((config.email as string) || "");
+      setHelpdeskDefaultSection((config.defaultSectionId as string) || "");
+      setHelpdeskConfigLoaded(true);
+    }
+  }, [helpdeskIntegration, helpdeskConfigLoaded]);
+
+  useEffect(() => {
+    if (selectedKnowledgeBase) {
+      setHelpdeskConfigLoaded(false);
+      setHelpdeskTestStatus(null);
+      setHelpdeskProvider('zendesk');
+      setHelpdeskSubdomain("");
+      setHelpdeskEmail("");
+      setHelpdeskApiToken("");
+      setHelpdeskApiKey("");
+      setHelpdeskDefaultSection("");
+    }
+  }, [selectedKnowledgeBase?.id]);
 
   const form = useForm<ServiceNowFormValues>({
     resolver: zodResolver(serviceNowFormSchema),
@@ -461,6 +497,121 @@ export default function Integrations() {
     },
   });
 
+  const helpdeskSaveMutation = useMutation({
+    mutationFn: async (data: { provider: string; subdomain: string; email: string; apiToken?: string; apiKey?: string; defaultSectionId?: string }) => {
+      await apiRequest("PUT", getApiUrl("/api/integrations/helpdesk"), {
+        enabled: true,
+        config: {
+          provider: data.provider,
+          subdomain: data.subdomain,
+          email: data.email,
+          apiToken: data.apiToken,
+          apiKey: data.apiKey,
+          defaultSectionId: data.defaultSectionId,
+        },
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations", selectedKnowledgeBase?.id] });
+      toast({ title: "Success", description: "Helpdesk configuration saved" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const helpdeskDisconnectMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", getApiUrl("/api/integrations/helpdesk/disconnect"));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations", selectedKnowledgeBase?.id] });
+      setHelpdeskTestStatus(null);
+      toast({ title: "Disconnected", description: "Helpdesk integration removed" });
+    },
+  });
+
+  const helpdeskImportMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", getApiUrl("/api/integrations/helpdesk/import"));
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations/helpdesk/sync-jobs", selectedKnowledgeBase?.id] });
+      toast({ title: "Import Started", description: `Job ID: ${data.jobId}` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const helpdeskExportMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", getApiUrl("/api/integrations/helpdesk/export"));
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations/helpdesk/sync-jobs", selectedKnowledgeBase?.id] });
+      toast({ title: "Export Started", description: `Job ID: ${data.jobId}` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const { data: syncJobs, isLoading: syncJobsLoading } = useQuery<Array<{
+    id: string;
+    provider: string;
+    direction: string;
+    status: string;
+    totalItems: number;
+    processedItems: number;
+    createdItems: number;
+    updatedItems: number;
+    skippedItems: number;
+    failedItems: number;
+    createdAt: string;
+  }>>({
+    queryKey: ["/api/integrations/helpdesk/sync-jobs", selectedKnowledgeBase?.id],
+    queryFn: async () => {
+      const res = await fetch(getApiUrl("/api/integrations/helpdesk/sync-jobs"), { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!selectedKnowledgeBase && !!helpdeskIntegration,
+  });
+
+  const { data: remoteCategories } = useQuery<{
+    categories?: Array<{ id: number; name: string }>;
+    sections?: Array<{ id: number; name: string; category_id: number }>;
+    folders?: Array<{ id: number; name: string; categoryName: string }>;
+  }>({
+    queryKey: ["/api/integrations/helpdesk/remote-categories", selectedKnowledgeBase?.id],
+    queryFn: async () => {
+      const res = await fetch(getApiUrl("/api/integrations/helpdesk/remote-categories"), { credentials: "include" });
+      if (!res.ok) return {};
+      return res.json();
+    },
+    enabled: !!selectedKnowledgeBase && !!helpdeskIntegration?.enabled,
+  });
+
+  const testHelpdeskConnection = async () => {
+    setTestingHelpdesk(true);
+    setHelpdeskTestStatus(null);
+    try {
+      const res = await fetch(getApiUrl("/api/integrations/helpdesk/test"), {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = await res.json();
+      setHelpdeskTestStatus(data);
+    } catch (error: any) {
+      setHelpdeskTestStatus({ success: false, message: error.message });
+    } finally {
+      setTestingHelpdesk(false);
+    }
+  };
+
   const { data: teamsTeams, isLoading: teamsTeamsLoading } = useQuery<Array<{ id: string; displayName: string }>>({
     queryKey: ["/api/integrations/teams/teams", selectedKnowledgeBase?.id],
     queryFn: async () => {
@@ -553,9 +704,9 @@ export default function Integrations() {
             <ShieldCheck className="w-4 h-4" />
             <span className="hidden sm:inline">SSO</span>
           </TabsTrigger>
-          <TabsTrigger value="zendesk" className="gap-2" data-testid="tab-zendesk" disabled>
+          <TabsTrigger value="zendesk" className="gap-2" data-testid="tab-zendesk">
             <Headphones className="w-4 h-4" />
-            <span className="hidden sm:inline">Zendesk</span>
+            <span className="hidden sm:inline">Helpdesk</span>
           </TabsTrigger>
           <TabsTrigger value="api" className="gap-2" data-testid="tab-api" disabled>
             <Plug2 className="w-4 h-4" />
@@ -1478,23 +1629,275 @@ export default function Integrations() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="zendesk">
+        <TabsContent value="zendesk" className="space-y-6">
           <Card>
             <CardHeader>
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-teal-100 dark:bg-teal-900/30">
-                  <Headphones className="w-6 h-6 text-teal-600 dark:text-teal-400" />
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-teal-100 dark:bg-teal-900/30">
+                    <Headphones className="w-6 h-6 text-teal-600 dark:text-teal-400" />
+                  </div>
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      Zendesk / Freshdesk
+                      {helpdeskIntegration?.enabled && (
+                        <Badge variant="secondary" className="bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
+                          Connected
+                        </Badge>
+                      )}
+                    </CardTitle>
+                    <CardDescription>Import and export articles to support platforms</CardDescription>
+                  </div>
                 </div>
-                <div>
-                  <CardTitle>Zendesk / Freshdesk</CardTitle>
-                  <CardDescription>Import and export articles to support platforms</CardDescription>
-                </div>
+                {helpdeskIntegration?.enabled && (
+                  <Button 
+                    variant="destructive" 
+                    size="sm"
+                    onClick={() => helpdeskDisconnectMutation.mutate()}
+                    disabled={helpdeskDisconnectMutation.isPending}
+                    data-testid="button-disconnect-helpdesk"
+                  >
+                    {helpdeskDisconnectMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Disconnect"}
+                  </Button>
+                )}
               </div>
             </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground">Coming soon...</p>
+            <CardContent className="space-y-6">
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>API Credentials Required</AlertTitle>
+                <AlertDescription>
+                  For Zendesk: Use your email and API token (Admin → Apps → API → Zendesk API).
+                  For Freshdesk: Use your email and API key from profile settings.
+                </AlertDescription>
+              </Alert>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Provider</label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="helpdeskProvider"
+                        value="zendesk"
+                        checked={helpdeskProvider === "zendesk"}
+                        onChange={() => setHelpdeskProvider("zendesk")}
+                        className="w-4 h-4"
+                        data-testid="radio-zendesk"
+                      />
+                      <span>Zendesk</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="helpdeskProvider"
+                        value="freshdesk"
+                        checked={helpdeskProvider === "freshdesk"}
+                        onChange={() => setHelpdeskProvider("freshdesk")}
+                        className="w-4 h-4"
+                        data-testid="radio-freshdesk"
+                      />
+                      <span>Freshdesk</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-2 block">
+                    {helpdeskProvider === "zendesk" ? "Subdomain" : "Domain"}
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      placeholder={helpdeskProvider === "zendesk" ? "your-company" : "your-company"}
+                      value={helpdeskSubdomain}
+                      onChange={(e) => setHelpdeskSubdomain(e.target.value)}
+                      data-testid="input-helpdesk-subdomain"
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      .{helpdeskProvider === "zendesk" ? "zendesk.com" : "freshdesk.com"}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Email</label>
+                  <Input
+                    type="email"
+                    placeholder="admin@company.com"
+                    value={helpdeskEmail}
+                    onChange={(e) => setHelpdeskEmail(e.target.value)}
+                    data-testid="input-helpdesk-email"
+                  />
+                </div>
+
+                {helpdeskProvider === "zendesk" ? (
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">API Token</label>
+                    <Input
+                      type="password"
+                      placeholder="Enter your Zendesk API token"
+                      value={helpdeskApiToken}
+                      onChange={(e) => setHelpdeskApiToken(e.target.value)}
+                      data-testid="input-helpdesk-apitoken"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Found in Admin → Channels → API
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">API Key</label>
+                    <Input
+                      type="password"
+                      placeholder="Enter your Freshdesk API key"
+                      value={helpdeskApiKey}
+                      onChange={(e) => setHelpdeskApiKey(e.target.value)}
+                      data-testid="input-helpdesk-apikey"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Found in Profile Settings → API Key
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <Button
+                    onClick={() => helpdeskSaveMutation.mutate({
+                      provider: helpdeskProvider,
+                      subdomain: helpdeskSubdomain,
+                      email: helpdeskEmail,
+                      apiToken: helpdeskApiToken || undefined,
+                      apiKey: helpdeskApiKey || undefined,
+                      defaultSectionId: helpdeskDefaultSection || undefined,
+                    })}
+                    disabled={helpdeskSaveMutation.isPending || !helpdeskSubdomain || !helpdeskEmail || (helpdeskProvider === "zendesk" ? !helpdeskApiToken : !helpdeskApiKey)}
+                    data-testid="button-save-helpdesk"
+                  >
+                    {helpdeskSaveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                    Save Configuration
+                  </Button>
+                  {helpdeskIntegration?.enabled && (
+                    <Button
+                      variant="outline"
+                      onClick={testHelpdeskConnection}
+                      disabled={testingHelpdesk}
+                      data-testid="button-test-helpdesk"
+                    >
+                      {testingHelpdesk ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                      Test Connection
+                    </Button>
+                  )}
+                </div>
+
+                {helpdeskTestStatus && (
+                  <Alert variant={helpdeskTestStatus.success ? "default" : "destructive"}>
+                    {helpdeskTestStatus.success ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+                    <AlertTitle>{helpdeskTestStatus.success ? "Connection Successful" : "Connection Failed"}</AlertTitle>
+                    <AlertDescription>{helpdeskTestStatus.message}</AlertDescription>
+                  </Alert>
+                )}
+              </div>
             </CardContent>
           </Card>
+
+          {helpdeskIntegration?.enabled && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Sync Articles</CardTitle>
+                <CardDescription>Import articles from or export articles to your helpdesk</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-4">
+                  <Button
+                    onClick={() => helpdeskImportMutation.mutate()}
+                    disabled={helpdeskImportMutation.isPending}
+                    data-testid="button-import-helpdesk"
+                  >
+                    {helpdeskImportMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                    Import from {helpdeskProvider === "zendesk" ? "Zendesk" : "Freshdesk"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => helpdeskExportMutation.mutate()}
+                    disabled={helpdeskExportMutation.isPending}
+                    data-testid="button-export-helpdesk"
+                  >
+                    {helpdeskExportMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ExternalLink className="w-4 h-4 mr-2" />}
+                    Export to {helpdeskProvider === "zendesk" ? "Zendesk" : "Freshdesk"}
+                  </Button>
+                </div>
+
+                {remoteCategories && (
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">
+                      Default {helpdeskProvider === "zendesk" ? "Section" : "Folder"} for Export
+                    </label>
+                    <select
+                      className="w-full p-2 border rounded-md bg-background"
+                      value={helpdeskDefaultSection}
+                      onChange={(e) => setHelpdeskDefaultSection(e.target.value)}
+                      data-testid="select-helpdesk-section"
+                    >
+                      <option value="">Select a {helpdeskProvider === "zendesk" ? "section" : "folder"}...</option>
+                      {helpdeskProvider === "zendesk" && remoteCategories.sections?.map((section) => (
+                        <option key={section.id} value={String(section.id)}>
+                          {section.name}
+                        </option>
+                      ))}
+                      {helpdeskProvider === "freshdesk" && remoteCategories.folders?.map((folder) => (
+                        <option key={folder.id} value={String(folder.id)}>
+                          {folder.name} ({folder.categoryName})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {helpdeskIntegration?.enabled && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Sync History</CardTitle>
+                <CardDescription>Recent synchronization jobs</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {syncJobsLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                  </div>
+                ) : syncJobs && syncJobs.length > 0 ? (
+                  <div className="space-y-3">
+                    {syncJobs.slice(0, 10).map((job) => (
+                      <div key={job.id} className="flex flex-wrap items-center justify-between gap-2 p-3 border rounded-md" data-testid={`sync-job-${job.id}`}>
+                        <div className="flex items-center gap-3">
+                          <Badge 
+                            variant={job.status === "completed" ? "default" : job.status === "failed" ? "destructive" : "secondary"}
+                          >
+                            {job.status}
+                          </Badge>
+                          <span className="text-sm font-medium capitalize">{job.direction}</span>
+                          <span className="text-sm text-muted-foreground">
+                            {new Date(job.createdAt).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                          <span>Created: {job.createdItems}</span>
+                          <span>Updated: {job.updatedItems}</span>
+                          {job.skippedItems > 0 && <span>Skipped: {job.skippedItems}</span>}
+                          {job.failedItems > 0 && <span className="text-destructive">Failed: {job.failedItems}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-muted-foreground text-center py-8">No sync jobs yet</p>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="api">

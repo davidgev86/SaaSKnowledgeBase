@@ -9,6 +9,8 @@ import {
   teamMembers,
   articleRevisions,
   integrations,
+  externalArticleMappings,
+  syncJobs,
   type User,
   type UpsertUser,
   type KnowledgeBase,
@@ -28,6 +30,10 @@ import {
   type Integration,
   type InsertIntegration,
   type UpdateIntegration,
+  type ExternalArticleMapping,
+  type InsertExternalArticleMapping,
+  type SyncJob,
+  type InsertSyncJob,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql, ilike, or } from "drizzle-orm";
@@ -92,6 +98,19 @@ export interface IStorage {
   deleteIntegration(id: string): Promise<void>;
 
   searchPublicArticles(kbId: string, query: string): Promise<Article[]>;
+
+  getExternalMappingsByKnowledgeBaseId(kbId: string): Promise<ExternalArticleMapping[]>;
+  getExternalMappingByLocalArticle(kbId: string, localArticleId: string, provider: string): Promise<ExternalArticleMapping | undefined>;
+  getExternalMappingByExternalId(kbId: string, externalId: string, provider: string): Promise<ExternalArticleMapping | undefined>;
+  createExternalMapping(mapping: InsertExternalArticleMapping): Promise<ExternalArticleMapping>;
+  updateExternalMapping(id: string, mapping: Partial<InsertExternalArticleMapping>): Promise<ExternalArticleMapping>;
+  deleteExternalMapping(id: string): Promise<void>;
+  getConflictedMappings(kbId: string): Promise<ExternalArticleMapping[]>;
+
+  getSyncJobsByKnowledgeBaseId(kbId: string, limit?: number): Promise<SyncJob[]>;
+  getSyncJobById(id: string): Promise<SyncJob | undefined>;
+  createSyncJob(job: InsertSyncJob): Promise<SyncJob>;
+  updateSyncJob(id: string, job: Partial<InsertSyncJob>): Promise<SyncJob>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -584,6 +603,111 @@ export class DatabaseStorage implements IStorage {
         )
       )
       .limit(10);
+  }
+
+  async getExternalMappingsByKnowledgeBaseId(kbId: string): Promise<ExternalArticleMapping[]> {
+    return db
+      .select()
+      .from(externalArticleMappings)
+      .where(eq(externalArticleMappings.knowledgeBaseId, kbId))
+      .orderBy(desc(externalArticleMappings.updatedAt));
+  }
+
+  async getExternalMappingByLocalArticle(
+    kbId: string,
+    localArticleId: string,
+    provider: string
+  ): Promise<ExternalArticleMapping | undefined> {
+    const [mapping] = await db
+      .select()
+      .from(externalArticleMappings)
+      .where(
+        and(
+          eq(externalArticleMappings.knowledgeBaseId, kbId),
+          eq(externalArticleMappings.localArticleId, localArticleId),
+          eq(externalArticleMappings.provider, provider)
+        )
+      );
+    return mapping;
+  }
+
+  async getExternalMappingByExternalId(
+    kbId: string,
+    externalId: string,
+    provider: string
+  ): Promise<ExternalArticleMapping | undefined> {
+    const [mapping] = await db
+      .select()
+      .from(externalArticleMappings)
+      .where(
+        and(
+          eq(externalArticleMappings.knowledgeBaseId, kbId),
+          eq(externalArticleMappings.externalId, externalId),
+          eq(externalArticleMappings.provider, provider)
+        )
+      );
+    return mapping;
+  }
+
+  async createExternalMapping(mappingData: InsertExternalArticleMapping): Promise<ExternalArticleMapping> {
+    const [mapping] = await db.insert(externalArticleMappings).values(mappingData).returning();
+    return mapping;
+  }
+
+  async updateExternalMapping(
+    id: string,
+    mappingData: Partial<InsertExternalArticleMapping>
+  ): Promise<ExternalArticleMapping> {
+    const [mapping] = await db
+      .update(externalArticleMappings)
+      .set({ ...mappingData, updatedAt: new Date() })
+      .where(eq(externalArticleMappings.id, id))
+      .returning();
+    return mapping;
+  }
+
+  async deleteExternalMapping(id: string): Promise<void> {
+    await db.delete(externalArticleMappings).where(eq(externalArticleMappings.id, id));
+  }
+
+  async getConflictedMappings(kbId: string): Promise<ExternalArticleMapping[]> {
+    return db
+      .select()
+      .from(externalArticleMappings)
+      .where(
+        and(
+          eq(externalArticleMappings.knowledgeBaseId, kbId),
+          eq(externalArticleMappings.hasConflict, true)
+        )
+      );
+  }
+
+  async getSyncJobsByKnowledgeBaseId(kbId: string, limit: number = 20): Promise<SyncJob[]> {
+    return db
+      .select()
+      .from(syncJobs)
+      .where(eq(syncJobs.knowledgeBaseId, kbId))
+      .orderBy(desc(syncJobs.createdAt))
+      .limit(limit);
+  }
+
+  async getSyncJobById(id: string): Promise<SyncJob | undefined> {
+    const [job] = await db.select().from(syncJobs).where(eq(syncJobs.id, id));
+    return job;
+  }
+
+  async createSyncJob(jobData: InsertSyncJob): Promise<SyncJob> {
+    const [job] = await db.insert(syncJobs).values(jobData as any).returning();
+    return job;
+  }
+
+  async updateSyncJob(id: string, jobData: Partial<InsertSyncJob>): Promise<SyncJob> {
+    const [job] = await db
+      .update(syncJobs)
+      .set(jobData as any)
+      .where(eq(syncJobs.id, id))
+      .returning();
+    return job;
   }
 }
 
