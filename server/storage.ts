@@ -11,6 +11,7 @@ import {
   integrations,
   externalArticleMappings,
   syncJobs,
+  apiKeys,
   type User,
   type UpsertUser,
   type KnowledgeBase,
@@ -34,6 +35,8 @@ import {
   type InsertExternalArticleMapping,
   type SyncJob,
   type InsertSyncJob,
+  type ApiKey,
+  type InsertApiKey,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql, ilike, or } from "drizzle-orm";
@@ -111,6 +114,14 @@ export interface IStorage {
   getSyncJobById(id: string): Promise<SyncJob | undefined>;
   createSyncJob(job: InsertSyncJob): Promise<SyncJob>;
   updateSyncJob(id: string, job: Partial<InsertSyncJob>): Promise<SyncJob>;
+
+  getApiKeysByKnowledgeBaseId(kbId: string): Promise<ApiKey[]>;
+  getApiKeyById(id: string): Promise<ApiKey | undefined>;
+  getApiKeyByPrefix(prefix: string): Promise<ApiKey | undefined>;
+  createApiKey(key: InsertApiKey): Promise<ApiKey>;
+  updateApiKey(id: string, key: Partial<InsertApiKey>): Promise<ApiKey>;
+  incrementApiKeyUsage(id: string): Promise<void>;
+  revokeApiKey(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -708,6 +719,68 @@ export class DatabaseStorage implements IStorage {
       .where(eq(syncJobs.id, id))
       .returning();
     return job;
+  }
+
+  async getApiKeysByKnowledgeBaseId(kbId: string): Promise<ApiKey[]> {
+    return db
+      .select()
+      .from(apiKeys)
+      .where(
+        and(
+          eq(apiKeys.knowledgeBaseId, kbId),
+          sql`${apiKeys.revokedAt} IS NULL`
+        )
+      )
+      .orderBy(desc(apiKeys.createdAt));
+  }
+
+  async getApiKeyById(id: string): Promise<ApiKey | undefined> {
+    const [key] = await db.select().from(apiKeys).where(eq(apiKeys.id, id));
+    return key;
+  }
+
+  async getApiKeyByPrefix(prefix: string): Promise<ApiKey | undefined> {
+    const [key] = await db
+      .select()
+      .from(apiKeys)
+      .where(
+        and(
+          eq(apiKeys.prefix, prefix),
+          sql`${apiKeys.revokedAt} IS NULL`
+        )
+      );
+    return key;
+  }
+
+  async createApiKey(keyData: InsertApiKey): Promise<ApiKey> {
+    const [key] = await db.insert(apiKeys).values(keyData).returning();
+    return key;
+  }
+
+  async updateApiKey(id: string, keyData: Partial<InsertApiKey>): Promise<ApiKey> {
+    const [key] = await db
+      .update(apiKeys)
+      .set(keyData)
+      .where(eq(apiKeys.id, id))
+      .returning();
+    return key;
+  }
+
+  async incrementApiKeyUsage(id: string): Promise<void> {
+    await db
+      .update(apiKeys)
+      .set({
+        requestCount: sql`${apiKeys.requestCount} + 1`,
+        lastUsedAt: new Date(),
+      })
+      .where(eq(apiKeys.id, id));
+  }
+
+  async revokeApiKey(id: string): Promise<void> {
+    await db
+      .update(apiKeys)
+      .set({ revokedAt: new Date() })
+      .where(eq(apiKeys.id, id));
   }
 }
 
