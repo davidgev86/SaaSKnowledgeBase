@@ -111,7 +111,7 @@ export default function PublicKnowledgeBase() {
                     >
                       <BookOpen
                         className="w-5 h-5"
-                        style={{ color: kb?.primaryColor }}
+                        style={{ color: kb?.primaryColor || undefined }}
                       />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -123,11 +123,9 @@ export default function PublicKnowledgeBase() {
                   </div>
                   <div className="space-y-2 mt-4">
                     {categoryArticles.slice(0, 3).map((article) => (
-                      <Link key={article.id} href={`/kb/${identifier}/articles/${article.id}`}>
-                        <a className="block text-sm hover:text-primary transition-colors" data-testid={`article-link-${article.id}`}>
-                          <FileText className="w-3 h-3 inline mr-2" />
-                          {article.title}
-                        </a>
+                      <Link key={article.id} href={`/kb/${identifier}/articles/${article.id}`} className="block text-sm hover:text-primary transition-colors" data-testid={`article-link-${article.id}`}>
+                        <FileText className="w-3 h-3 inline mr-2" />
+                        {article.title}
                       </Link>
                     ))}
                     {categoryArticles.length > 3 && (
