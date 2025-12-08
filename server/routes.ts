@@ -8,6 +8,8 @@ import { z } from "zod";
 import { emailService } from "./email";
 import { ServiceNowService, getServiceNowCredentials } from "./services/servicenow";
 import { SlackService, getSlackCredentials } from "./services/slack";
+import publicApiRoutes from "./routes/public-api";
+import { generateApiKey, hashApiKey } from "./services/api-auth";
 
 const inviteSchema = z.object({
   email: z.string().email(),
@@ -2558,6 +2560,217 @@ export function registerRoutes(app: Express) {
       });
 
       res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ========================================
+  // Public API v1 Routes
+  // ========================================
+  app.use("/api/v1", publicApiRoutes);
+
+  // ========================================
+  // API Key Management Routes
+  // ========================================
+  
+  // List API keys for a knowledge base
+  app.get("/api/integrations/public-api/keys", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can manage API keys" });
+      }
+
+      const keys = await storage.getApiKeysByKnowledgeBaseId(kbId);
+      
+      // Return keys without the hashed secret
+      res.json(keys.map(k => ({
+        id: k.id,
+        name: k.name,
+        prefix: k.prefix,
+        scopes: k.scopes,
+        rateLimitOverride: k.rateLimitOverride,
+        requestCount: k.requestCount,
+        lastUsedAt: k.lastUsedAt,
+        createdAt: k.createdAt,
+      })));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Create new API key
+  app.post("/api/integrations/public-api/keys", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can create API keys" });
+      }
+
+      const { name, scopes = ["read"], rateLimitOverride } = req.body;
+
+      if (!name || typeof name !== "string" || name.length < 1) {
+        return res.status(400).json({ message: "Name is required" });
+      }
+
+      // Generate the API key
+      const { prefix, secret, fullKey } = generateApiKey();
+      const hashedKey = hashApiKey(secret);
+
+      const apiKey = await storage.createApiKey({
+        knowledgeBaseId: kbId,
+        name,
+        prefix,
+        hashedKey,
+        scopes: Array.isArray(scopes) ? scopes : ["read"],
+        rateLimitOverride: rateLimitOverride || null,
+      });
+
+      // Return the full key only once - this is the only time the user will see it
+      res.status(201).json({
+        id: apiKey.id,
+        name: apiKey.name,
+        prefix: apiKey.prefix,
+        scopes: apiKey.scopes,
+        rateLimitOverride: apiKey.rateLimitOverride,
+        createdAt: apiKey.createdAt,
+        key: fullKey, // Only returned on creation!
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Update API key (name, scopes, rate limit)
+  app.put("/api/integrations/public-api/keys/:keyId", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+      const keyId = req.params.keyId;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can update API keys" });
+      }
+
+      const existingKey = await storage.getApiKeyById(keyId);
+      if (!existingKey || existingKey.knowledgeBaseId !== kbId) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+
+      const { name, scopes, rateLimitOverride } = req.body;
+      
+      const updates: any = {};
+      if (name !== undefined) updates.name = name;
+      if (scopes !== undefined) updates.scopes = scopes;
+      if (rateLimitOverride !== undefined) updates.rateLimitOverride = rateLimitOverride;
+
+      const updatedKey = await storage.updateApiKey(keyId, updates);
+
+      res.json({
+        id: updatedKey.id,
+        name: updatedKey.name,
+        prefix: updatedKey.prefix,
+        scopes: updatedKey.scopes,
+        rateLimitOverride: updatedKey.rateLimitOverride,
+        requestCount: updatedKey.requestCount,
+        lastUsedAt: updatedKey.lastUsedAt,
+        createdAt: updatedKey.createdAt,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Revoke API key
+  app.delete("/api/integrations/public-api/keys/:keyId", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+      const keyId = req.params.keyId;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can revoke API keys" });
+      }
+
+      const existingKey = await storage.getApiKeyById(keyId);
+      if (!existingKey || existingKey.knowledgeBaseId !== kbId) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+
+      await storage.revokeApiKey(keyId);
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Regenerate API key (revoke old and create new)
+  app.post("/api/integrations/public-api/keys/:keyId/regenerate", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const kbId = req.query.kbId as string;
+      const keyId = req.params.keyId;
+
+      if (!kbId) {
+        return res.status(400).json({ message: "Knowledge base ID required" });
+      }
+
+      if (!await checkUserCanManage(userId, kbId)) {
+        return res.status(403).json({ message: "Only owners and admins can regenerate API keys" });
+      }
+
+      const existingKey = await storage.getApiKeyById(keyId);
+      if (!existingKey || existingKey.knowledgeBaseId !== kbId) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+
+      // Revoke the old key
+      await storage.revokeApiKey(keyId);
+
+      // Create a new key with the same settings
+      const { prefix, secret, fullKey } = generateApiKey();
+      const hashedKey = hashApiKey(secret);
+
+      const newKey = await storage.createApiKey({
+        knowledgeBaseId: kbId,
+        name: existingKey.name,
+        prefix,
+        hashedKey,
+        scopes: existingKey.scopes,
+        rateLimitOverride: existingKey.rateLimitOverride,
+      });
+
+      res.status(201).json({
+        id: newKey.id,
+        name: newKey.name,
+        prefix: newKey.prefix,
+        scopes: newKey.scopes,
+        rateLimitOverride: newKey.rateLimitOverride,
+        createdAt: newKey.createdAt,
+        key: fullKey, // Only returned on creation/regeneration!
+      });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
