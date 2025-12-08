@@ -479,3 +479,38 @@ export const insertSyncJobSchema = createInsertSchema(syncJobs).omit({
 
 export type InsertSyncJob = z.infer<typeof insertSyncJobSchema>;
 export type SyncJob = typeof syncJobs.$inferSelect;
+
+export const apiKeys = pgTable("api_keys", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  knowledgeBaseId: varchar("knowledge_base_id").notNull().references(() => knowledgeBases.id, { onDelete: "cascade" }),
+  name: varchar("name").notNull(),
+  prefix: varchar("prefix", { length: 8 }).notNull(),
+  hashedKey: varchar("hashed_key").notNull(),
+  scopes: text("scopes").array().notNull().default(sql`ARRAY['read']::text[]`),
+  rateLimitOverride: integer("rate_limit_override"),
+  requestCount: integer("request_count").notNull().default(0),
+  lastUsedAt: timestamp("last_used_at"),
+  revokedAt: timestamp("revoked_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
+  knowledgeBase: one(knowledgeBases, {
+    fields: [apiKeys.knowledgeBaseId],
+    references: [knowledgeBases.id],
+  }),
+}));
+
+export const insertApiKeySchema = createInsertSchema(apiKeys).omit({
+  id: true,
+  requestCount: true,
+  lastUsedAt: true,
+  revokedAt: true,
+  createdAt: true,
+});
+
+export type InsertApiKey = z.infer<typeof insertApiKeySchema>;
+export type ApiKey = typeof apiKeys.$inferSelect;
+
+export const apiKeyScopesEnum = z.enum(["read", "write"]);
+export type ApiKeyScope = z.infer<typeof apiKeyScopesEnum>;
