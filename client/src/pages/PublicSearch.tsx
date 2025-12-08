@@ -29,10 +29,26 @@ export default function PublicSearch() {
     }
   }, [initialQuery]);
 
-  const highlightMatch = (text: string, query: string) => {
-    if (!query) return text;
-    const regex = new RegExp(`(${query})`, "gi");
-    return text.replace(regex, "<mark>$1</mark>");
+  const escapeHtml = (text: string): string => {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  };
+
+  const escapeRegex = (str: string): string => {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  };
+
+  const highlightMatch = (text: string, query: string): string => {
+    if (!query) return escapeHtml(text);
+    const safeText = escapeHtml(text);
+    const safeQuery = escapeRegex(query);
+    try {
+      const regex = new RegExp(`(${safeQuery})`, "gi");
+      return safeText.replace(regex, "<mark>$1</mark>");
+    } catch {
+      return safeText;
+    }
   };
 
   const handleSearch = (e: React.FormEvent) => {
@@ -82,8 +98,10 @@ export default function PublicSearch() {
         </form>
 
         <div className="mb-6">
-          <h2 className="text-2xl font-bold">
-            {searchQuery ? `Search Results for "${searchQuery}"` : "Search"}
+          <h2 className="text-2xl font-bold" data-testid="search-heading">
+            {searchQuery ? (
+              <>Search Results for "<span className="text-primary">{searchQuery}</span>"</>
+            ) : "Search"}
           </h2>
           {articles && (
             <p className="text-muted-foreground mt-2" data-testid="search-results-count">
