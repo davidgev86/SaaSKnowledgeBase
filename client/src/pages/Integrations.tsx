@@ -106,6 +106,125 @@ export default function Integrations() {
   const [helpdeskDefaultSection, setHelpdeskDefaultSection] = useState<string>("");
   const [helpdeskConfigLoaded, setHelpdeskConfigLoaded] = useState(false);
 
+  // API Key management state
+  const [newApiKeyName, setNewApiKeyName] = useState<string>("");
+  const [newApiKeyScopes, setNewApiKeyScopes] = useState<string[]>(["read"]);
+  const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
+  const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
+
+  // API Key types
+  interface ApiKeyInfo {
+    id: string;
+    name: string;
+    prefix: string;
+    scopes: string[];
+    rateLimitOverride: number | null;
+    requestCount: number;
+    lastUsedAt: string | null;
+    createdAt: string;
+    key?: string;
+  }
+
+  // Query for API keys
+  const { data: apiKeys, isLoading: apiKeysLoading, refetch: refetchApiKeys } = useQuery<ApiKeyInfo[]>({
+    queryKey: ["/api/integrations/public-api/keys", selectedKnowledgeBase?.id],
+    queryFn: async () => {
+      const res = await fetch(getApiUrl("/api/integrations/public-api/keys"), { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch API keys");
+      return res.json();
+    },
+    enabled: !!selectedKnowledgeBase,
+  });
+
+  // Mutation for creating API keys
+  const createApiKeyMutation = useMutation({
+    mutationFn: async (data: { name: string; scopes: string[] }) => {
+      const res = await apiRequest("POST", getApiUrl("/api/integrations/public-api/keys"), data);
+      return res;
+    },
+    onSuccess: (data: ApiKeyInfo) => {
+      setNewlyCreatedKey(data.key || null);
+      setNewApiKeyName("");
+      setNewApiKeyScopes(["read"]);
+      refetchApiKeys();
+      toast({
+        title: "API Key Created",
+        description: "Make sure to copy your key now - it won't be shown again!",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: "Failed to create API key",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation for revoking API keys
+  const revokeApiKeyMutation = useMutation({
+    mutationFn: async (keyId: string) => {
+      await apiRequest("DELETE", getApiUrl(`/api/integrations/public-api/keys/${keyId}`));
+    },
+    onSuccess: () => {
+      refetchApiKeys();
+      toast({
+        title: "API Key Revoked",
+        description: "The API key has been revoked and can no longer be used.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: "Failed to revoke API key",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation for regenerating API keys
+  const regenerateApiKeyMutation = useMutation({
+    mutationFn: async (keyId: string) => {
+      const res = await apiRequest("POST", getApiUrl(`/api/integrations/public-api/keys/${keyId}/regenerate`));
+      return res;
+    },
+    onSuccess: (data: ApiKeyInfo) => {
+      setNewlyCreatedKey(data.key || null);
+      refetchApiKeys();
+      toast({
+        title: "API Key Regenerated",
+        description: "Your old key has been revoked. Copy the new key now!",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: "Failed to regenerate API key",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const copyToClipboard = async (text: string, keyId?: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      if (keyId) {
+        setCopiedKeyId(keyId);
+        setTimeout(() => setCopiedKeyId(null), 2000);
+      }
+      toast({
+        title: "Copied",
+        description: "Copied to clipboard",
+      });
+    } catch {
+      toast({
+        title: "Error",
+        description: "Failed to copy to clipboard",
+        variant: "destructive",
+      });
+    }
+  };
+
   useEffect(() => {
     if (helpdeskIntegration && !helpdeskConfigLoaded) {
       const config = (helpdeskIntegration.config as Record<string, unknown>) || {};
@@ -708,7 +827,7 @@ export default function Integrations() {
             <Headphones className="w-4 h-4" />
             <span className="hidden sm:inline">Helpdesk</span>
           </TabsTrigger>
-          <TabsTrigger value="api" className="gap-2" data-testid="tab-api" disabled>
+          <TabsTrigger value="api" className="gap-2" data-testid="tab-api">
             <Plug2 className="w-4 h-4" />
             <span className="hidden sm:inline">API</span>
           </TabsTrigger>
@@ -1900,7 +2019,7 @@ export default function Integrations() {
           )}
         </TabsContent>
 
-        <TabsContent value="api">
+        <TabsContent value="api" className="space-y-6">
           <Card>
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -1909,12 +2028,257 @@ export default function Integrations() {
                 </div>
                 <div>
                   <CardTitle>Public API</CardTitle>
-                  <CardDescription>API keys and documentation for external access</CardDescription>
+                  <CardDescription>Create API keys to access your knowledge base programmatically</CardDescription>
                 </div>
               </div>
             </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground">Coming soon...</p>
+            <CardContent className="space-y-6">
+              {/* New API Key Creation */}
+              <div className="space-y-4">
+                <h3 className="font-semibold">Create New API Key</h3>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Input
+                    placeholder="Key name (e.g., Production, Development)"
+                    value={newApiKeyName}
+                    onChange={(e) => setNewApiKeyName(e.target.value)}
+                    className="flex-1"
+                    data-testid="input-api-key-name"
+                  />
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={newApiKeyScopes.includes("read")}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setNewApiKeyScopes(prev => [...prev, "read"]);
+                          } else {
+                            setNewApiKeyScopes(prev => prev.filter(s => s !== "read"));
+                          }
+                        }}
+                        className="rounded"
+                        data-testid="checkbox-scope-read"
+                      />
+                      Read
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={newApiKeyScopes.includes("write")}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setNewApiKeyScopes(["read", "write"]);
+                          } else {
+                            setNewApiKeyScopes(["read"]);
+                          }
+                        }}
+                        className="rounded"
+                        data-testid="checkbox-scope-write"
+                      />
+                      Write
+                    </label>
+                  </div>
+                  <Button
+                    onClick={() => {
+                      if (newApiKeyName.trim()) {
+                        createApiKeyMutation.mutate({
+                          name: newApiKeyName.trim(),
+                          scopes: newApiKeyScopes,
+                        });
+                      }
+                    }}
+                    disabled={!newApiKeyName.trim() || createApiKeyMutation.isPending}
+                    data-testid="button-create-api-key"
+                  >
+                    {createApiKeyMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        Creating...
+                      </>
+                    ) : (
+                      <>
+                        <Key className="w-4 h-4 mr-2" />
+                        Create Key
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Newly Created Key Alert */}
+              {newlyCreatedKey && (
+                <Alert className="bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
+                  <Key className="h-4 w-4 text-green-600 dark:text-green-400" />
+                  <AlertTitle className="text-green-800 dark:text-green-300">Your New API Key</AlertTitle>
+                  <AlertDescription className="space-y-2">
+                    <p className="text-green-700 dark:text-green-400">
+                      Copy this key now - you won't be able to see it again!
+                    </p>
+                    <div className="flex items-center gap-2 p-2 bg-white dark:bg-gray-800 rounded border font-mono text-sm">
+                      <code className="flex-1 break-all" data-testid="text-new-api-key">{newlyCreatedKey}</code>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => copyToClipboard(newlyCreatedKey, "new")}
+                        data-testid="button-copy-new-key"
+                      >
+                        {copiedKeyId === "new" ? (
+                          <CheckCircle2 className="w-4 h-4 text-green-600" />
+                        ) : (
+                          <Copy className="w-4 h-4" />
+                        )}
+                      </Button>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setNewlyCreatedKey(null)}
+                      className="mt-2"
+                    >
+                      Dismiss
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {/* API Keys List */}
+              <div className="space-y-4">
+                <h3 className="font-semibold">Your API Keys</h3>
+                {apiKeysLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : apiKeys && apiKeys.length > 0 ? (
+                  <div className="space-y-3">
+                    {apiKeys.map((key) => (
+                      <div
+                        key={key.id}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 border rounded-lg"
+                        data-testid={`api-key-row-${key.id}`}
+                      >
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium" data-testid={`text-key-name-${key.id}`}>{key.name}</span>
+                            <Badge variant="outline" className="text-xs font-mono">
+                              {key.prefix}...
+                            </Badge>
+                            {key.scopes.includes("write") && (
+                              <Badge className="bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">
+                                Write
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            Created {new Date(key.createdAt).toLocaleDateString()} 
+                            {key.lastUsedAt && ` • Last used ${new Date(key.lastUsedAt).toLocaleDateString()}`}
+                            {` • ${key.requestCount.toLocaleString()} requests`}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => regenerateApiKeyMutation.mutate(key.id)}
+                            disabled={regenerateApiKeyMutation.isPending}
+                            data-testid={`button-regenerate-${key.id}`}
+                          >
+                            <RefreshCw className="w-4 h-4 mr-1" />
+                            Regenerate
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                            onClick={() => {
+                              if (confirm("Are you sure you want to revoke this API key? This action cannot be undone.")) {
+                                revokeApiKeyMutation.mutate(key.id);
+                              }
+                            }}
+                            disabled={revokeApiKeyMutation.isPending}
+                            data-testid={`button-revoke-${key.id}`}
+                          >
+                            <XCircle className="w-4 h-4 mr-1" />
+                            Revoke
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Key className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                    <p>No API keys yet</p>
+                    <p className="text-sm">Create your first API key to start using the public API</p>
+                  </div>
+                )}
+              </div>
+
+              {/* API Documentation */}
+              <div className="space-y-4 pt-4 border-t">
+                <h3 className="font-semibold">API Documentation</h3>
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Base URL</AlertTitle>
+                  <AlertDescription>
+                    <code className="text-sm bg-muted px-2 py-1 rounded">
+                      {window.location.origin}/api/v1
+                    </code>
+                  </AlertDescription>
+                </Alert>
+
+                <div className="space-y-3">
+                  <div className="p-3 bg-muted rounded-lg">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">GET</Badge>
+                      <code className="text-sm">/articles</code>
+                    </div>
+                    <p className="text-sm text-muted-foreground">List all articles. Supports ?category_id, ?is_public, ?limit, ?offset</p>
+                  </div>
+
+                  <div className="p-3 bg-muted rounded-lg">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">GET</Badge>
+                      <code className="text-sm">/articles/:id</code>
+                    </div>
+                    <p className="text-sm text-muted-foreground">Get a specific article by ID</p>
+                  </div>
+
+                  <div className="p-3 bg-muted rounded-lg">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">GET</Badge>
+                      <code className="text-sm">/categories</code>
+                    </div>
+                    <p className="text-sm text-muted-foreground">List all categories</p>
+                  </div>
+
+                  <div className="p-3 bg-muted rounded-lg">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">GET</Badge>
+                      <code className="text-sm">/search?q=query</code>
+                    </div>
+                    <p className="text-sm text-muted-foreground">Search articles. Supports ?q (required), ?is_public, ?limit</p>
+                  </div>
+
+                  <div className="p-3 bg-muted rounded-lg">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">GET</Badge>
+                      <code className="text-sm">/knowledge-base</code>
+                    </div>
+                    <p className="text-sm text-muted-foreground">Get knowledge base info (title, slug, primary color)</p>
+                  </div>
+                </div>
+
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Authentication</AlertTitle>
+                  <AlertDescription>
+                    Include your API key in the Authorization header:
+                    <code className="block mt-2 p-2 bg-muted rounded text-sm">
+                      Authorization: Bearer kb_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxx
+                    </code>
+                  </AlertDescription>
+                </Alert>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
