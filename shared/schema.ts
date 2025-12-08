@@ -484,7 +484,7 @@ export const apiKeys = pgTable("api_keys", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   knowledgeBaseId: varchar("knowledge_base_id").notNull().references(() => knowledgeBases.id, { onDelete: "cascade" }),
   name: varchar("name").notNull(),
-  prefix: varchar("prefix", { length: 8 }).notNull(),
+  prefix: varchar("prefix", { length: 16 }).notNull(),
   hashedKey: varchar("hashed_key").notNull(),
   scopes: text("scopes").array().notNull().default(sql`ARRAY['read']::text[]`),
   rateLimitOverride: integer("rate_limit_override"),
